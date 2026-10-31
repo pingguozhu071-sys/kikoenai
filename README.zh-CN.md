@@ -66,6 +66,8 @@ Kikoeru 系服务器提供一套 REST 接口，用于浏览同人音声作品、
 
 ## 安装
 
+从 [Releases](../../releases) 页面下载最新构建（`Kikoenai-<版本>-win-x64.zip`），解压后选择安装向导或免安装运行。
+
 ### 安装向导
 1. 下载发布压缩包，解压到任意位置。
 2. 运行 `安装.bat`（或 `Kikoenai.exe --install`）。

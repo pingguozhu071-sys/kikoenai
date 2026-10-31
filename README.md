@@ -66,6 +66,8 @@ It is **not** a server, not a scraper, not a downloader for arbitrary sites, and
 
 ## Install
 
+Download the latest build from the [Releases](../../releases) page (`Kikoenai-<version>-win-x64.zip`), extract it, then either run the installer or the portable executable.
+
 ### Installer
 1. Download the release archive and extract it anywhere.
 2. Run `安装.bat` (or `Kikoenai.exe --install`).
