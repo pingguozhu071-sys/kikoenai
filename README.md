@@ -1,5 +1,7 @@
 # Kikoenai
 
+**English** / [简体中文](README.zh-CN.md)
+
 An unofficial, third-party desktop client for **Kikoeru**-compatible servers, built with Electron, Vue 3 and Material 3. Windows-first.
 
 > **Not affiliated with Kikoeru, kikoeru-express, or any content site.**

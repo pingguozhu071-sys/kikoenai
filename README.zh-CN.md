@@ -1,5 +1,7 @@
 # Kikoenai
 
+[English](README.md) / **简体中文**
+
 面向 **Kikoeru** 兼容服务器的第三方、非官方桌面客户端，基于 Electron + Vue 3 + Material 3，优先支持 Windows。
 
 > **与 Kikoeru、kikoeru-express 以及任何内容站点均无隶属关系。**
