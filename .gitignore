@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+release/
+build/icon-256.png
+build/icon-32.png
+*.tsbuildinfo
+
+# Local-only copies and tooling output
+ref-asmrone/
+.mimosa/
+*.tgz
+*.log
+
+# Local API snapshots and test images (never part of the project)
+/*.json
+!/package.json
+!/package-lock.json
+!/tsconfig*.json
+cover_*.jpg
+/assets/
+
+# Local helper scripts with machine-specific paths
+scripts/verify-installer.mjs
+scripts/patch-focus.mjs
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini

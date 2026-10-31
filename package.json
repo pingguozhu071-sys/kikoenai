@@ -1,0 +1,43 @@
+{
+  "name": "kikoenai",
+  "private": true,
+  "version": "0.5.0",
+  "description": "Kikoenai — unofficial desktop client for Kikoeru servers (Electron + Vue 3 + Material 3)",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "pingguozhu071-sys",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pingguozhu071-sys/kikoenai.git"
+  },
+  "homepage": "https://github.com/pingguozhu071-sys/kikoenai#readme",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "node --test electron/guard.test.cjs electron/local.test.cjs",
+    "app": "npm run build && electron .",
+    "app:dev": "electron . --dev",
+    "package": "node scripts/package.mjs"
+  },
+  "dependencies": {
+    "@material/material-color-utilities": "^0.3.0",
+    "https-proxy-agent": "^9.1.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "electron": "^33.4.11",
+    "rcedit": "^5.0.2",
+    "typescript": "~5.6.3",
+    "vite": "^6.0.7",
+    "vue-tsc": "^2.2.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}
