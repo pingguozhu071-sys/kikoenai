@@ -30,8 +30,3 @@ export function writeLyricStyle(kind: LyricWindowKind, style: LyricStyle) {
     localStorage.setItem(LYRIC_STYLE_KEY[kind], style)
   } catch { /* 忽略 */ }
 }
-
-/** 玻璃质感对应的窗口材质（Windows 11 原生亚克力） */
-export function materialFor(style: LyricStyle): 'acrylic' | 'none' {
-  return style === 'classic' ? 'none' : 'acrylic'
-}

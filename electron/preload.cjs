@@ -59,8 +59,6 @@ contextBridge.exposeInMainWorld('kikoeru', {
   /** 显式开关字幕窗：target = desktop | taskbar（两者互斥） */
   lyricsSet: (target, visible) => ipcRenderer.invoke('lyrics:set', target, !!visible),
   lyricsState: () => ipcRenderer.invoke('lyrics:state'),
-  /** 字幕窗材质：acrylic / none */
-  lyricsSetMaterial: (target, m) => ipcRenderer.send('lyrics:material', target, m),
   lyricsUpdate: (payload) => ipcRenderer.send('lyrics:update', payload),
   lyricsRequest: () => ipcRenderer.invoke('lyrics:request'),
   lyricsClose: () => ipcRenderer.invoke('lyrics:close'),
@@ -70,6 +68,41 @@ contextBridge.exposeInMainWorld('kikoeru', {
     const handler = (_e, payload) => cb(payload)
     ipcRenderer.on('lyrics:data', handler)
     return () => ipcRenderer.removeListener('lyrics:data', handler)
+  },
+  /** 字幕窗上的播放控制：'toggle' | 'prev' | 'next' | { seekBy } */
+  lyricsControl: (action) => ipcRenderer.send('lyrics:control', action),
+  /** 从抽屉里点某一首，交给主窗播放 */
+  lyricsPlayIndex: (index) => ipcRenderer.send('lyrics:play-index', index),
+  /** 播放列表快照（主窗推送 / 字幕窗主动拉取） */
+  lyricsQueueUpdate: (queue) => ipcRenderer.send('lyrics:queue-update', queue),
+  lyricsQueue: () => ipcRenderer.invoke('lyrics:queue'),
+  onLyricsQueue: (cb) => {
+    const handler = (_e, q) => cb(q)
+    ipcRenderer.on('lyrics:queue', handler)
+    return () => ipcRenderer.removeListener('lyrics:queue', handler)
+  },
+  /** 播放列表小橱窗：独立小窗，贴着汉堡键上方 */
+  lyricsPanelToggle: (target) => ipcRenderer.invoke('lyrics:panel-toggle', target),
+  lyricsPanelClose: () => ipcRenderer.invoke('lyrics:panel-close'),
+  onLyricsPanelState: (cb) => {
+    const handler = (_e, state) => cb(state)
+    ipcRenderer.on('lyrics:panel-state', handler)
+    return () => ipcRenderer.removeListener('lyrics:panel-state', handler)
+  },
+  onLyricsPanelTarget: (cb) => {
+    const handler = (_e, target) => cb(target)
+    ipcRenderer.on('lyrics:panel-target', handler)
+    return () => ipcRenderer.removeListener('lyrics:panel-target', handler)
+  },
+  /** 实时背景取样的来源（桌面流 id + 所在显示器） */
+  glassSource: () => ipcRenderer.invoke('glass:source'),
+  /** 任务栏字幕的鼠标穿透开关（指针进入时才接收点击） */
+  lyricsInteractive: (on) => ipcRenderer.send('lyrics:interactive', !!on),
+  /** 主窗接收字幕窗发来的播放指令 */
+  onPlayerCommand: (cb) => {
+    const handler = (_e, cmd) => cb(cmd)
+    ipcRenderer.on('player:command', handler)
+    return () => ipcRenderer.removeListener('player:command', handler)
   },
 
   // ---- 下载 ----

@@ -1080,8 +1080,8 @@ body.is-resizing .np-bg { opacity: 0.25; filter: none !important; }
 }
 .np-video-btn:hover { background: color-mix(in srgb, #000 54%, transparent); }
 
-/* 桌面歌词窗：整个页面透明 */
-body.is-lyrics-window { background: transparent !important; overflow: hidden; }
+/* 桌面歌词窗：整个页面透明（含根元素，否则系统材质会被白色底遮住） */
+html.is-lyrics-window, body.is-lyrics-window { background: transparent !important; overflow: hidden; }
 body.is-lyrics-window #app { background: transparent; }
 
 /* ---------- 播放条（专业化分区） ---------- */

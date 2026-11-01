@@ -16,7 +16,7 @@ import { toast } from './toast'
 import { extOf } from '../utils/format'
 import { sniffAudioCodec, UNSUPPORTED_AUDIO } from '../utils/mp4'
 import {
-  collectSubtitles, collectSubtitlesShallow, decodeText, parseSubtitle,
+  collectSubtitles, collectSubtitlesShallow, decodeText, fitsDuration, parseSubtitle,
   rankSubtitles, rankSubtitlesGlobal, subtitleFormat,
 } from '../services/lyrics'
 
@@ -32,6 +32,8 @@ export interface PlaylistItem {
   rawDownloadUrl?: string
   streamUrl: string
   coverUrl: string
+  /** 服务端给出的音轨时长（秒），用于校验字幕是否属于这条音轨 */
+  duration?: number
 }
 
 export interface LrcLine { time: number; text: string }
@@ -115,6 +117,13 @@ interface LyricsBridge {
   lyricsUpdate?: (p: { current: string; next: string; playing: boolean; title: string }) => void
   resolveLocal?: (opts: { workId: number; fileName: string }) => Promise<string | null>
   setPlayerState?: (p: { playing: boolean; title: string }) => void
+  lyricsQueueUpdate?: (q: LyricsQueue) => void
+}
+
+export interface LyricsQueue {
+  items: { title: string; workTitle: string }[]
+  index: number
+  playing: boolean
 }
 
 /** 把播放状态推给主进程：任务栏缩略图按钮用 */
@@ -125,9 +134,25 @@ function pushPlayerState() {
 }
 
 let lastPushedIdx = -2
+let lastQueueSig = ''
+
+/** 播放列表快照给字幕窗的抽屉用；只在列表/当前项/播放状态变化时发 */
+function pushLyricsQueue(force = false) {
+  const bridge = (window as unknown as { kikoeru?: LyricsBridge }).kikoeru
+  if (!bridge?.lyricsQueueUpdate) return
+  const sig = `${player.index}|${player.playlist.length}|${player.playing ? 1 : 0}|${player.playlist[0]?.title ?? ''}|${player.playlist[player.playlist.length - 1]?.title ?? ''}`
+  if (!force && sig === lastQueueSig) return
+  lastQueueSig = sig
+  bridge.lyricsQueueUpdate({
+    items: player.playlist.map((i) => ({ title: i.title, workTitle: i.workTitle })),
+    index: player.index,
+    playing: player.playing,
+  })
+}
 
 /** 把当前行推给桌面歌词窗；只在行号变化或状态变化时发 */
 function notifyLyrics(force = false) {
+  pushLyricsQueue(force)
   const bridge = (window as unknown as { kikoeru?: LyricsBridge }).kikoeru
   if (!bridge?.lyricsUpdate) return
   const item = current()
@@ -355,6 +380,7 @@ function toPlaylistItem(n: TrackNode, workId: number, workTitle: string): Playli
     rawDownloadUrl: n.mediaDownloadUrl ?? '',
     streamUrl: url,
     coverUrl: api.coverUrl(workId, true),
+    duration: typeof n.duration === 'number' && n.duration > 0 ? n.duration : undefined,
   }
 }
 
@@ -395,6 +421,15 @@ export function findTrackLevel(nodes: TrackNode[], title: string): TrackNode[] |
     }
   }
   return null
+}
+
+/** 同名音轨可能出现在多个文件夹里；全收集后由调用方判断是否唯一 */
+function findTrackLevels(nodes: TrackNode[], title: string, out: TrackNode[][] = []): TrackNode[][] {
+  if (nodes.some((n) => n.type === 'audio' && n.title === title)) out.push(nodes)
+  for (const n of nodes) {
+    if (n.type === 'folder' && n.children) findTrackLevels(n.children, title, out)
+  }
+  return out
 }
 
 export function playList(list: PlaylistItem[], index: number) {
@@ -544,12 +579,12 @@ export async function bindSubtitleManually(workId: number, audioTitle: string, s
   writeBind(bindKey(workId, audioTitle), subtitle.title)
   const item = current()
   if (!item || item.workId !== workId) return
-  if (!await applySubtitle(subtitle)) {
-    toast('这个字幕文件解析不出内容', 'error')
+  if (!await applySubtitle(subtitle, undefined, item.duration)) {
+    toast('这个字幕文件解析不出内容，或时间轴与当前音轨不符', 'error')
   }
 }
 
-async function applySubtitle(sub: TrackNode, ownerSeq?: number): Promise<boolean> {
+async function applySubtitle(sub: TrackNode, ownerSeq?: number, expectedSeconds?: number): Promise<boolean> {
   const seq = ownerSeq ?? ++lrcSeq.v
   const url = api.resolveMediaUrl(sub.mediaStreamUrl)
   if (!url) return false
@@ -566,6 +601,11 @@ async function applySubtitle(sub: TrackNode, ownerSeq?: number): Promise<boolean
     const lines = parseSubtitle(text, '.' + fmt)
     if (!lines.length) {
       console.warn('[subtitle] empty', sub.title, fmt, text.length)
+      return false
+    }
+    // 时长对不上就是别的音轨的字幕（典型：闹铃/特典挂到正片台本上）
+    if (expectedSeconds && !fitsDuration(lines, expectedSeconds)) {
+      console.warn('[subtitle] duration mismatch', sub.title, expectedSeconds)
       return false
     }
     player.lrc = lines
@@ -599,13 +639,13 @@ async function autoBindLyrics(item: PlaylistItem) {
   const all = collectSubtitles(tree)
   const tried = new Set<string>()
 
-  /** 按顺序尝试候选，直到某个文件真的能解析出内容 */
+  /** 按顺序尝试候选，直到某个文件真的能解析出内容且时长吻合 */
   const attempt = async (nodes: TrackNode[]): Promise<boolean> => {
     for (const node of nodes) {
       if (seq !== lrcSeq.v) return false
       if (tried.has(node.title)) continue
       tried.add(node.title)
-      if (await applySubtitle(node, seq)) return true
+      if (await applySubtitle(node, seq, item.duration)) return true
       if (seq !== lrcSeq.v) return false
     }
     return false
@@ -614,14 +654,18 @@ async function autoBindLyrics(item: PlaylistItem) {
   const manualName = readBinds()[bindKey(item.workId, item.title)]
   if (manualName) {
     const manual = all.find((s) => s.title === manualName)
-    if (manual && await applySubtitle(manual, seq)) return
+    if (manual && await applySubtitle(manual, seq, item.duration)) return
   }
 
-  // 1) 同一个文件夹：同名 / 去声道同名 / 同轨号，带时间轴的优先
-  const level = findTrackLevel(tree, item.title)
-  if (level && await attempt(rankSubtitles(item.title, collectSubtitlesShallow(level)))) return
+  // 1) 同一个文件夹：同名 / 去声道同名，带时间轴的优先。
+  //    同名音轨出现在多个文件夹时无法判断属于哪一层，跳过文件夹阶段。
+  const levels = findTrackLevels(tree, item.title)
+  if (levels.length === 1) {
+    const levelSubs = collectSubtitlesShallow(levels[0])
+    if (await attempt(rankSubtitles(item.title, levelSubs))) return
+  }
 
-  // 2) 跨文件夹兜底：只认同名（含归一化同名），不按位置猜
+  // 2) 跨文件夹兜底：只接受全树唯一的同名文件
   if (await attempt(rankSubtitlesGlobal(item.title, all))) return
 
   // 全部失败：留空，界面显示"会自动匹配"，不要绑一个空时间轴

@@ -12,7 +12,7 @@
  */
 const {
   app, BrowserWindow, protocol, net, session, Tray, Menu, globalShortcut,
-  ipcMain, nativeImage, shell, dialog, screen,
+  ipcMain, nativeImage, shell, dialog, screen, desktopCapturer,
 } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -137,6 +137,9 @@ let lyricWin = null
 /** 任务栏字幕窗：屏幕左下角一行歌词，鼠标穿透 */
 let taskbarWin = null
 let lastLyricsPayload = null
+let lastLyricsQueue = { items: [], index: -1, playing: false }
+let panelWin = null
+let panelTarget = 'desktop'
 let lyricDisplayId = null
 let broadcastWindowState = null
 let tray = null
@@ -1133,6 +1136,14 @@ async function toggleFullscreenSmooth() {
 // ---------------------------------------------------------------- 窗口
 
 /**
+ * 字幕窗/弹窗统一用透明窗口：真实背景由渲染层从屏幕流里取样，
+ * 并把窗口自身排除在屏幕流之外（setContentProtection）。
+ */
+function glassWindowOptions() {
+  return { transparent: true, backgroundColor: '#00000000' }
+}
+
+/**
  * 桌面歌词窗：无边框透明、置顶、不进任务栏，底部居中。
  * 与主窗同步通过 IPC 推送当前歌词行（只在换行时推，避免高频）。
  */
@@ -1156,14 +1167,13 @@ function createLyricWindow() {
   lyricWin = new BrowserWindow({
     width, height, x, y,
     frame: false,
-    transparent: true,
+    ...glassWindowOptions(),
     resizable: false,
     movable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
     hasShadow: false,
     focusable: true,
-    backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -1174,13 +1184,16 @@ function createLyricWindow() {
 
   lyricWin.setAlwaysOnTop(true, 'screen-saver')
   lyricWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // 屏幕取样时排除自身，避免取样画面里出现歌词窗
+  lyricWin.setContentProtection(true)
 
   if (isDev) lyricWin.loadURL(DEV_URL + '#/desktop-lyrics')
   else lyricWin.loadURL('app://kikoeru/index.html#/desktop-lyrics')
 
   lyricWin.webContents.once('did-finish-load', () => {
-    if (lastLyricsPayload && lyricWin && !lyricWin.isDestroyed()) {
-      lyricWin.webContents.send('lyrics:data', lastLyricsPayload)
+    if (lyricWin && !lyricWin.isDestroyed()) {
+      if (lastLyricsPayload) lyricWin.webContents.send('lyrics:data', lastLyricsPayload)
+      lyricWin.webContents.send('lyrics:queue', lastLyricsQueue)
     }
   })
   lyricWin.on('closed', () => { lyricWin = null })
@@ -1203,14 +1216,13 @@ function createTaskbarLyricsWindow() {
   taskbarWin = new BrowserWindow({
     width, height, x, y,
     frame: false,
-    transparent: true,
+    ...glassWindowOptions(),
     resizable: false,
     movable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
     focusable: false,
     hasShadow: false,
-    backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -1220,8 +1232,9 @@ function createTaskbarLyricsWindow() {
   })
   taskbarWin.setAlwaysOnTop(true, 'screen-saver')
   taskbarWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  // 不接收鼠标事件：点在歌词上直接穿透到桌面/任务栏
-  taskbarWin.setIgnoreMouseEvents(true)
+  taskbarWin.setContentProtection(true)
+  // 默认鼠标穿透；但转发移动事件，指针进入后渲染层可请求临时接收点击（按钮/抽屉）。
+  taskbarWin.setIgnoreMouseEvents(true, { forward: true })
 
   const url = isDev
     ? DEV_URL + '#/taskbar-lyrics'
@@ -1229,8 +1242,9 @@ function createTaskbarLyricsWindow() {
   taskbarWin.loadURL(url)
 
   taskbarWin.webContents.once('did-finish-load', () => {
-    if (lastLyricsPayload && taskbarWin && !taskbarWin.isDestroyed()) {
-      taskbarWin.webContents.send('lyrics:data', lastLyricsPayload)
+    if (taskbarWin && !taskbarWin.isDestroyed()) {
+      if (lastLyricsPayload) taskbarWin.webContents.send('lyrics:data', lastLyricsPayload)
+      taskbarWin.webContents.send('lyrics:queue', lastLyricsQueue)
     }
   })
   taskbarWin.on('closed', () => { taskbarWin = null })
@@ -1239,10 +1253,10 @@ function createTaskbarLyricsWindow() {
 
 function toggleTaskbarLyricsWindow() {
   if (taskbarWin && !taskbarWin.isDestroyed() && taskbarWin.isVisible()) {
-    taskbarWin.hide()
+    hideLyricsWindow('taskbar', taskbarWin)
     return false
   }
-  if (lyricWin && !lyricWin.isDestroyed()) lyricWin.hide()
+  if (lyricWin && !lyricWin.isDestroyed()) hideLyricsWindow('desktop', lyricWin)
   createTaskbarLyricsWindow()
   return true
 }
@@ -1255,21 +1269,129 @@ function lyricsWindowsState() {
   }
 }
 
+// ---------------------------------------------------------------- 播放列表小橱窗
+// 独立的小窗口悬在歌词栏上方（贴着汉堡键那一侧），不改变歌词窗尺寸，避免整条抽动。
+
+function panelWindowSize() {
+  const n = Array.isArray(lastLyricsQueue.items) ? lastLyricsQueue.items.length : 0
+  return { width: 344, height: Math.min(380, 58 + Math.max(1, n) * 36 + 18) }
+}
+
+function broadcastPanelState() {
+  const open = !!(panelWin && !panelWin.isDestroyed() && panelWin.isVisible())
+  const payload = { open, target: panelTarget }
+  for (const win of [lyricWin, taskbarWin]) {
+    if (win && !win.isDestroyed()) win.webContents.send('lyrics:panel-state', payload)
+  }
+}
+
+let panelClosedAt = 0
+
+function closeLyricsPanel(target) {
+  if (!panelWin || panelWin.isDestroyed()) return
+  if (target && panelTarget !== target) return
+  panelWin.hide()
+  panelClosedAt = Date.now()
+  broadcastPanelState()
+}
+
+function placePanelWindow() {
+  if (!panelWin || panelWin.isDestroyed()) return
+  const base = panelTarget === 'taskbar' ? taskbarWin : lyricWin
+  if (!base || base.isDestroyed()) return
+  const { width, height } = panelWindowSize()
+  const b = base.getBounds()
+  const x = Math.round(b.x + b.width - width - 12)
+  const y = Math.round(b.y - height - 10)
+  panelWin.setBounds({ x, y, width, height })
+}
+
+function showLyricsPanel(target) {
+  const base = target === 'taskbar' ? taskbarWin : lyricWin
+  if (!base || base.isDestroyed() || !base.isVisible()) return false
+
+  if (panelWin && !panelWin.isDestroyed() && panelWin.isVisible() && panelTarget === target) {
+    closeLyricsPanel()
+    return false
+  }
+  // 点汉堡键会先让橱窗失焦关闭，紧接着的点击不应该又把它弹回来
+  if (Date.now() - panelClosedAt < 220) return false
+  panelTarget = target
+  let created = false
+
+  if (!panelWin || panelWin.isDestroyed()) {
+    created = true
+    const { width, height } = panelWindowSize()
+    panelWin = new BrowserWindow({
+      width, height, show: false,
+      frame: false,
+      ...glassWindowOptions(),
+      resizable: false,
+      movable: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      hasShadow: false,
+      focusable: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+      },
+    })
+    panelWin.setAlwaysOnTop(true, 'screen-saver')
+    panelWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    // 不把自身拍进屏幕流，否则取样会拍到橱窗自己
+    panelWin.setContentProtection(true)
+    const url = isDev ? DEV_URL + '#/lyrics-panel' : 'app://kikoeru/index.html#/lyrics-panel'
+    panelWin.loadURL(url)
+    panelWin.webContents.once('did-finish-load', () => {
+      if (panelWin && !panelWin.isDestroyed()) {
+        panelWin.webContents.send('lyrics:queue', lastLyricsQueue)
+        panelWin.webContents.send('lyrics:panel-target', panelTarget)
+      }
+    })
+    panelWin.on('blur', () => closeLyricsPanel())
+    panelWin.on('closed', () => { panelWin = null; broadcastPanelState() })
+    panelWin.once('ready-to-show', () => {
+      if (!panelWin || panelWin.isDestroyed()) return
+      placePanelWindow()
+      panelWin.show()
+      panelWin.focus()
+      broadcastPanelState()
+    })
+  }
+
+  placePanelWindow()
+  if (!created) {
+    panelWin.show()
+    panelWin.focus()
+    broadcastPanelState()
+  }
+  return true
+}
+
 /** 显式显示/隐藏，并保证两种形式只存在一个 */
+function hideLyricsWindow(target, win) {
+  if (!win || win.isDestroyed()) return
+  closeLyricsPanel(target)
+  win.hide()
+}
+
 function setLyricsWindow(target, visible) {
   if (target === 'taskbar') {
     if (visible) {
-      if (lyricWin && !lyricWin.isDestroyed()) lyricWin.hide()
+      if (lyricWin && !lyricWin.isDestroyed()) hideLyricsWindow('desktop', lyricWin)
       createTaskbarLyricsWindow()
-    } else if (taskbarWin && !taskbarWin.isDestroyed()) {
-      taskbarWin.hide()
+    } else {
+      hideLyricsWindow('taskbar', taskbarWin)
     }
   } else {
     if (visible) {
-      if (taskbarWin && !taskbarWin.isDestroyed()) taskbarWin.hide()
+      if (taskbarWin && !taskbarWin.isDestroyed()) hideLyricsWindow('taskbar', taskbarWin)
       createLyricWindow()
-    } else if (lyricWin && !lyricWin.isDestroyed()) {
-      lyricWin.hide()
+    } else {
+      hideLyricsWindow('desktop', lyricWin)
     }
   }
   return lyricsWindowsState()
@@ -2077,10 +2199,10 @@ function createWindow() {
 /** 桌面字幕窗开关：托盘、任务栏按钮、菜单共用；与任务栏字幕互斥 */
 function toggleLyricsWindow() {
   if (lyricWin && !lyricWin.isDestroyed() && lyricWin.isVisible()) {
-    lyricWin.hide()
+    hideLyricsWindow('desktop', lyricWin)
     return false
   }
-  if (taskbarWin && !taskbarWin.isDestroyed()) taskbarWin.hide()
+  if (taskbarWin && !taskbarWin.isDestroyed()) hideLyricsWindow('taskbar', taskbarWin)
   createLyricWindow()
   return true
 }
@@ -2236,6 +2358,7 @@ if (!gotLock) {
       proxy: activeProxy,
       version: app.getVersion(),
       platform: process.platform,
+      acrylic: ACRYLIC_OK,
       serverUrl: API_TARGET,
       proxyMode: PROXY_MODE,
       proxyRules: PROXY_RULES,
@@ -2337,16 +2460,61 @@ if (!gotLock) {
     ipcMain.handle('lyrics:set', (_e, target, visible) => setLyricsWindow(target, !!visible))
     ipcMain.handle('lyrics:state', () => lyricsWindowsState())
 
-    // Windows 11 原生亚克力：桌面字幕/任务栏字幕的"磨砂/液态"用真实背景模糊
-    ipcMain.on('lyrics:material', (_e, target, material) => {
-      const win = target === 'taskbar' ? taskbarWin : lyricWin
-      if (!win || win.isDestroyed()) return
-      try {
-        win.setBackgroundMaterial(material === 'acrylic' ? 'acrylic' : 'none')
-      } catch { /* 旧系统不支持，退回普通半透明 */ }
+    ipcMain.handle('lyrics:request', () => lastLyricsPayload)
+
+    // ---- 字幕窗的播放控制与播放列表抽屉 ----
+    // 主窗是播放器的唯一持有者，字幕窗只发意图，由主窗执行后回推状态。
+    const forwardPlayerCommand = (cmd) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      mainWindow.webContents.send('player:command', cmd)
+    }
+    ipcMain.on('lyrics:control', (_e, action) => forwardPlayerCommand(action))
+    ipcMain.on('lyrics:play-index', (_e, index) => {
+      const n = Number(index)
+      if (Number.isInteger(n) && n >= 0) forwardPlayerCommand({ type: 'play-index', index: n })
     })
 
-    ipcMain.handle('lyrics:request', () => lastLyricsPayload)
+    ipcMain.on('lyrics:queue-update', (_e, queue) => {
+      if (!queue || typeof queue !== 'object') return
+      lastLyricsQueue = queue
+      for (const win of [lyricWin, taskbarWin, panelWin]) {
+        if (win && !win.isDestroyed()) win.webContents.send('lyrics:queue', queue)
+      }
+      // 橱窗开着时跟着条目数调整高度（底边不动）
+      if (panelWin && !panelWin.isDestroyed() && panelWin.isVisible()) placePanelWindow()
+    })
+    ipcMain.handle('lyrics:queue', () => lastLyricsQueue)
+
+    // 屏幕取样源：让每个玻璃窗按自己所在的显示器取实时画面
+    ipcMain.handle('glass:source', async (e) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      const disp = win && !win.isDestroyed()
+        ? screen.getDisplayMatching(win.getBounds())
+        : screen.getPrimaryDisplay()
+      try {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: { width: 1, height: 1 },
+        })
+        const hit = sources.find((s) => String(s.display_id) === String(disp.id)) || sources[0]
+        if (!hit) return null
+        return { id: hit.id, display: disp.bounds, scaleFactor: disp.scaleFactor }
+      } catch {
+        return null
+      }
+    })
+
+    // 任务栏字幕默认鼠标穿透；指针进入时才接收点击，离开后恢复穿透。
+    ipcMain.on('lyrics:interactive', (_e, on) => {
+      if (!taskbarWin || taskbarWin.isDestroyed()) return
+      taskbarWin.setIgnoreMouseEvents(!on, { forward: true })
+    })
+
+    // 播放列表小橱窗：独立小窗，贴着汉堡键那一侧升起来
+    ipcMain.handle('lyrics:panel-toggle', (_e, target) => ({
+      open: showLyricsPanel(target === 'taskbar' ? 'taskbar' : 'desktop'),
+    }))
+    ipcMain.handle('lyrics:panel-close', () => { closeLyricsPanel(); return true })
 
     ipcMain.handle('lyrics:next-display', () => {
       const displays = screen.getAllDisplays()
@@ -2366,7 +2534,7 @@ if (!gotLock) {
     })
 
     ipcMain.handle('lyrics:close', () => {
-      if (lyricWin && !lyricWin.isDestroyed()) lyricWin.hide()
+      hideLyricsWindow('desktop', lyricWin)
       return { visible: false }
     })
 

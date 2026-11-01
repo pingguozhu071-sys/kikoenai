@@ -25,6 +25,7 @@ import PlaylistsView from './views/PlaylistsView.vue'
 import DownloadsView from './views/DownloadsView.vue'
 import DesktopLyrics from './views/DesktopLyrics.vue'
 import TaskbarLyrics from './views/TaskbarLyrics.vue'
+import LyricsPanel from './views/LyricsPanel.vue'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -44,6 +45,7 @@ const router = createRouter({
     { path: '/settings', component: SettingsView },
     { path: '/desktop-lyrics', component: DesktopLyrics },
     { path: '/taskbar-lyrics', component: TaskbarLyrics },
+    { path: '/lyrics-panel', component: LyricsPanel },
     { path: '/login', redirect: '/' },
   ],
 })

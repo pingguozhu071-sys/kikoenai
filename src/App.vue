@@ -16,13 +16,14 @@ import SleepTimerDialog from './components/SleepTimerDialog.vue'
 import { initDownloads } from './stores/downloads'
 import { useSession } from './stores/session'
 import { applyTheme } from './theme/material'
-import { player, current, toggle, next, prev, seekBy, setVolume, toggleMute } from './stores/player'
+import { player, current, toggle, next, prev, seekBy, setVolume, toggleMute, playAt } from './stores/player'
 import { ui } from './stores/ui'
 
 const route = useRoute()
 const router = useRouter()
 const session = useSession
 let offMediaKey: (() => void) | undefined
+let offPlayerCommand: (() => void) | undefined
 
 session.onRelogin(() => {
   ui.openLogin('登录已过期，请重新登录')
@@ -58,7 +59,8 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-const isLyricsWindow = computed(() => route.path === '/desktop-lyrics' || route.path === '/taskbar-lyrics')
+const isLyricsWindow = computed(() =>
+  route.path === '/desktop-lyrics' || route.path === '/taskbar-lyrics' || route.path === '/lyrics-panel')
 
 /** 点空白处让输入框失焦：否则搜索框的焦点环会一直亮着 */
 const FOCUSABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/
@@ -91,7 +93,12 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   void initDownloads()
   // 桌面壳的全局媒体键
-  const desktop = (window as unknown as { kikoeru?: { onMediaKey?: (cb: (a: string) => void) => () => void } }).kikoeru
+  const desktop = (window as unknown as {
+    kikoeru?: {
+      onMediaKey?: (cb: (a: string) => void) => () => void
+      onPlayerCommand?: (cb: (cmd: string | { type: string; index?: number; delta?: number }) => void) => () => void
+    }
+  }).kikoeru
   if (desktop?.onMediaKey) {
     offMediaKey = desktop.onMediaKey((action) => {
       if (action === 'toggle') toggle()
@@ -100,12 +107,25 @@ onMounted(() => {
       else if (action === 'stop') { if (player.playing) toggle() }
     })
   }
+  // 字幕窗的按钮/抽屉：主窗才是播放器本体
+  if (desktop?.onPlayerCommand) {
+    offPlayerCommand = desktop.onPlayerCommand((cmd) => {
+      if (cmd === 'toggle') toggle()
+      else if (cmd === 'prev') prev()
+      else if (cmd === 'next') next()
+      else if (cmd && typeof cmd === 'object') {
+        if (cmd.type === 'seek') seekBy(Number(cmd.delta) || 0)
+        else if (cmd.type === 'play-index' && typeof cmd.index === 'number') playAt(cmd.index)
+      }
+    })
+  }
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   document.removeEventListener('pointerdown', blurActiveInput, true)
   document.removeEventListener('click', blurActiveInput, true)
   offMediaKey?.()
+  offPlayerCommand?.()
 })
 </script>
 

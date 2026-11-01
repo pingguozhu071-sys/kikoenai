@@ -170,10 +170,18 @@ function normalize(s: string): string {
     .toLowerCase()
 }
 
-/** 提取开头的轨号，如 01 / track02 / 第3 */
-function trackNo(s: string): string {
-  const m = s.match(/(?:^|[^0-9])(\d{1,3})(?:[^0-9]|$)/)
+/**
+ * 开头的轨号，如 "01"、"track02"、"第3話"、"03_本編"。
+ * 只认开头，绝不在名字中间抓数字 —— "vol.2"、"48kHz" 这类会被误当轨号。
+ */
+function leadingTrackNo(s: string): string {
+  const m = s.trim().match(/^(?:(?:track|no\.?|disc)\s*)?0*(\d{1,3})(?=[\s._\-)（［\]:：話话]|$)/i)
   return m ? String(parseInt(m[1], 10)) : ''
+}
+
+/** 音频名是否只有轨号（"01" / "track 01"）——只有这种才允许按数字配对 */
+function isBareTrackStem(s: string): boolean {
+  return /^(?:(?:track|no\.?|disc)\s*)?0*\d{1,3}$/i.test(s.trim()) || /^第0*\d{1,3}[話话]?$/.test(s.trim())
 }
 
 /** 去掉左右/両耳 之类的声道后缀，便于跨命名匹配 */
@@ -197,7 +205,7 @@ export function matchSubtitle(audioTitle: string, subs: TrackNode[]): MatchResul
   if (!subs.length) return null
   const base = baseName(audioTitle)
   const normBase = normalize(stripChannel(base))
-  const no = trackNo(base)
+  const no = isBareTrackStem(base) ? leadingTrackNo(base) : ''
 
   let best: MatchResult | null = null
   const consider = (node: TrackNode, score: number) => {
@@ -212,7 +220,7 @@ export function matchSubtitle(audioTitle: string, subs: TrackNode[]): MatchResul
     const sNorm = normalize(stripChannel(sBase))
     if (sNorm && sNorm === normBase) { consider(s, 80); continue }
 
-    if (no && trackNo(sBase) === no) consider(s, 60)
+    if (no && leadingTrackNo(sBase) === no) consider(s, 60)
   }
   return best
 }
@@ -224,7 +232,7 @@ export function matchSubtitle(audioTitle: string, subs: TrackNode[]): MatchResul
 export function rankSubtitles(audioTitle: string, subs: TrackNode[]): TrackNode[] {
   const base = baseName(audioTitle)
   const normBase = normalize(stripChannel(base))
-  const no = trackNo(base)
+  const no = isBareTrackStem(base) ? leadingTrackNo(base) : ''
 
   const scored: { node: TrackNode; score: number; order: number }[] = []
   subs.forEach((s, order) => {
@@ -233,7 +241,7 @@ export function rankSubtitles(audioTitle: string, subs: TrackNode[]): TrackNode[
     let score = 0
     if (sBase === base) score = 100
     else if (normBase && normalize(stripChannel(sBase)) === normBase) score = 80
-    else if (no && trackNo(sBase) === no) score = 60
+    else if (no && leadingTrackNo(sBase) === no) score = 60
     if (!score) return
     if (isTimedFormat(s.title)) score += 5
     scored.push({ node: s, score, order })
@@ -242,26 +250,38 @@ export function rankSubtitles(audioTitle: string, subs: TrackNode[]): TrackNode[
   return scored.map((x) => x.node)
 }
 
-/** 跨文件夹候选：先同名，再归一化同名；同样把带时间轴的排在前面 */
+/**
+ * 跨文件夹候选：只接受"全树唯一"的同名文件。
+ * 同名出现两份说明无法判断属于哪一轨，宁可不挂，也不能猜。
+ */
 export function rankSubtitlesGlobal(audioTitle: string, subs: TrackNode[]): TrackNode[] {
   const base = baseName(audioTitle)
   const norm = normalize(stripChannel(base))
 
-  const sorted = (list: TrackNode[]) => {
-    const timed = list.filter((n) => isTimedFormat(n.title))
-    const plain = list.filter((n) => !isTimedFormat(n.title))
-    return [...timed, ...plain]
-  }
-
   const exact = subs.filter((s) => baseName(s.title) === base && !isReadmeLike(s.title))
-  if (exact.length) return sorted(exact)
+  if (exact.length === 1) return exact
+  if (exact.length > 1) return []
 
   const sameNorm = subs.filter((s) => {
     if (isReadmeLike(s.title)) return false
     const n = normalize(stripChannel(baseName(s.title)))
     return !!n && n === norm
   })
-  return sorted(sameNorm)
+  return sameNorm.length === 1 ? sameNorm : []
+}
+
+/**
+ * 时间轴是否落在这条音频的时长内。
+ * 用来挡住"闹铃/特典音轨挂上正片字幕"：正片时长和字幕末句严重不符时直接判失败。
+ */
+export function fitsDuration(lines: LrcLine[], seconds: number): boolean {
+  if (!lines.length || !(seconds > 5)) return true
+  let last = 0
+  for (const l of lines) if (l.time > last) last = l.time
+  if (last <= 0) return true
+  if (last > seconds * 1.25 + 30) return false
+  if (seconds > 240 && last < seconds * 0.15) return false
+  return true
 }
 
 /** 同一层（同一个文件夹）里的字幕；不做递归，避免串到别的文件夹 */
@@ -277,10 +297,11 @@ export function matchSubtitleGlobal(audioTitle: string, subs: TrackNode[]): Matc
   const base = baseName(audioTitle)
   const norm = normalize(stripChannel(base))
 
-  const sameName = subs.filter((s) => baseName(s.title) === base)
+  const sameName = subs.filter((s) => baseName(s.title) === base && !isReadmeLike(s.title))
   if (sameName.length === 1) return { node: sameName[0], score: 100 }
 
   const sameNorm = subs.filter((s) => {
+    if (isReadmeLike(s.title)) return false
     const n = normalize(stripChannel(baseName(s.title)))
     return !!n && n === norm
   })
