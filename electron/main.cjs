@@ -1985,32 +1985,49 @@ function createWindow() {
 
 // ---------------------------------------------------------------- 托盘 / 快捷键
 
-/** 任务栏缩略图按钮（仅 Windows）：上一首 / 播放暂停 / 下一首 */
+/** 桌面字幕窗开关：托盘、任务栏按钮、菜单共用 */
+function toggleLyricsWindow() {
+  if (lyricWin && !lyricWin.isDestroyed() && lyricWin.isVisible()) {
+    lyricWin.hide()
+    return false
+  }
+  createLyricWindow()
+  return true
+}
+
+/** 任务栏缩略图按钮（仅 Windows）：上一首 / 播放暂停 / 下一首 / 桌面字幕 */
 function refreshThumbar() {
   if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return
-  if (!playerState.title) {
-    try { mainWindow.setThumbarButtons([]) } catch { /* 忽略 */ }
-    return
-  }
 
   const icon = (name) => nativeImage.createFromPath(path.join(__dirname, 'thumbar', `${name}.png`))
-  const buttons = [
-    {
-      tooltip: '上一首',
-      icon: icon('prev'),
-      click: () => mainWindow?.webContents.send('media-key', 'prev'),
-    },
-    {
-      tooltip: playerState.playing ? '暂停' : '播放',
-      icon: icon(playerState.playing ? 'pause' : 'play'),
-      click: () => mainWindow?.webContents.send('media-key', 'toggle'),
-    },
-    {
-      tooltip: '下一首',
-      icon: icon('next'),
-      click: () => mainWindow?.webContents.send('media-key', 'next'),
-    },
-  ]
+  // 没在播放时也保留"桌面字幕"入口，否则用户找不到这个功能
+  const lyricButton = {
+    tooltip: '桌面字幕',
+    icon: icon('lyrics'),
+    click: () => { toggleLyricsWindow() },
+  }
+
+  const buttons = playerState.title
+    ? [
+        {
+          tooltip: '上一首',
+          icon: icon('prev'),
+          click: () => mainWindow?.webContents.send('media-key', 'prev'),
+        },
+        {
+          tooltip: playerState.playing ? '暂停' : '播放',
+          icon: icon(playerState.playing ? 'pause' : 'play'),
+          click: () => mainWindow?.webContents.send('media-key', 'toggle'),
+        },
+        {
+          tooltip: '下一首',
+          icon: icon('next'),
+          click: () => mainWindow?.webContents.send('media-key', 'next'),
+        },
+        lyricButton,
+      ]
+    : [lyricButton]
+
   // 图标缺失时宁可不显示，也不要塞空图标让 Windows 画出白块
   if (buttons.some((b) => b.icon.isEmpty())) {
     try { mainWindow.setThumbarButtons([]) } catch { /* 忽略 */ }
@@ -2217,15 +2234,8 @@ if (!gotLock) {
       fullscreen: mainWindow ? mainWindow.isFullScreen() : false,
     }))
 
-    // ---- 桌面歌词 ----
-    ipcMain.handle('lyrics:toggle', () => {
-      if (lyricWin && !lyricWin.isDestroyed() && lyricWin.isVisible()) {
-        lyricWin.hide()
-        return { visible: false }
-      }
-      createLyricWindow()
-      return { visible: true }
-    })
+    // ---- 桌面字幕 ----
+    ipcMain.handle('lyrics:toggle', () => ({ visible: toggleLyricsWindow() }))
 
     ipcMain.on('lyrics:update', (_e, payload) => {
       lastLyricsPayload = payload

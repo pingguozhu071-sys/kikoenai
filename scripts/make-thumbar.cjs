@@ -82,6 +82,14 @@ function inside(kind, x, y) {
     case 'next':
       return inRect(x, y, 0.64, 0.22, 0.74, 0.78)
         || inTriangle(x, y, 0.24, 0.20, 0.24, 0.80, 0.62, 0.50)
+    case 'lyrics': {
+      // 对话气泡 + 两条透明文字线
+      const bubble = inRect(x, y, 0.16, 0.18, 0.84, 0.64)
+        || inTriangle(x, y, 0.32, 0.64, 0.50, 0.64, 0.34, 0.84)
+      const line1 = inRect(x, y, 0.27, 0.31, 0.73, 0.37)
+      const line2 = inRect(x, y, 0.27, 0.45, 0.60, 0.51)
+      return bubble && !line1 && !line2
+    }
     default:
       return false
   }
@@ -115,7 +123,7 @@ function render(kind, size) {
 const outDir = path.join(__dirname, '..', 'electron', 'thumbar')
 fs.mkdirSync(outDir, { recursive: true })
 
-for (const kind of ['play', 'pause', 'prev', 'next']) {
+for (const kind of ['play', 'pause', 'prev', 'next', 'lyrics']) {
   fs.writeFileSync(path.join(outDir, `${kind}.png`), render(kind, 16))
   fs.writeFileSync(path.join(outDir, `${kind}@2x.png`), render(kind, 32))
 }

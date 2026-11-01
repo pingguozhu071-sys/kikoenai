@@ -63,6 +63,12 @@ function openDownloads() {
   void router.push('/downloads')
 }
 
+/** 桌面字幕窗（独立置顶窗口）开关 */
+function toggleDesktopLyrics() {
+  const bridge = (window as unknown as { kikoeru?: { lyricsToggle?: () => Promise<unknown> } }).kikoeru
+  if (bridge?.lyricsToggle) void bridge.lyricsToggle()
+}
+
 function openWork() {
   if (!item.value) return
   const id = item.value.workId
@@ -89,6 +95,9 @@ const activeCount = computed(() => downloadState.tasks.filter((t) => t.state ===
           </button>
           <span class="np-head-title">正在播放</span>
           <div style="flex: 1" />
+          <button class="icon-btn" title="桌面字幕" @click="toggleDesktopLyrics">
+            <UiIcon name="lyrics" :size="19" />
+          </button>
           <button class="icon-btn" title="下载当前音轨" @click="downloadCurrent">
             <UiIcon name="download" :size="19" />
           </button>
