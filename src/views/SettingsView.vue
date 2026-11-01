@@ -1,11 +1,15 @@
 <script setup lang="ts">
-/** 设置 — 服务器与网络、下载、关闭行为、账号、日志、关于 */
-import { onMounted, ref } from 'vue'
+/** 设置 — 服务器与网络、下载、字幕窗、关闭行为、账号、日志、关于 */
+import { onMounted, onUnmounted, ref } from 'vue'
 import UiIcon from '../components/UiIcon.vue'
 import { useSession } from '../stores/session'
 import { toast } from '../stores/toast'
 import { ui } from '../stores/ui'
 import { downloadSettings, pickDownloadDir } from '../stores/downloads'
+import {
+  LYRIC_STYLE_KEY, LYRIC_STYLE_NAMES, readLyricStyle, writeLyricStyle,
+  type LyricStyle, type LyricWindowKind,
+} from '../stores/lyricWindows'
 
 const session = useSession
 
@@ -16,6 +20,11 @@ interface ServerConfig {
   usingEnvServer: boolean
 }
 
+interface LyricsVisibility {
+  desktop: boolean
+  taskbar: boolean
+}
+
 interface DesktopBridge {
   getCloseToTray?: () => Promise<boolean>
   setCloseToTray?: (on: boolean) => Promise<boolean>
@@ -24,11 +33,44 @@ interface DesktopBridge {
   setProxy?: (patch: { mode: string; rules: string }) => Promise<{ ok: boolean; error?: string }>
   relaunch?: () => Promise<boolean>
   openLogDir?: () => Promise<boolean>
+  lyricsSet?: (target: LyricWindowKind, visible: boolean) => Promise<LyricsVisibility>
+  lyricsState?: () => Promise<LyricsVisibility>
 }
 const bridge = (window as unknown as { kikoeru?: DesktopBridge }).kikoeru
 
 /** 关闭窗口的行为：true=收进托盘，false=直接退出 */
 const closeToTray = ref(true)
+
+/** 字幕窗：两种形式互斥，样式可选经典/磨砂/液态 */
+const LYRIC_STYLES: LyricStyle[] = ['classic', 'frosted', 'liquid']
+const lyricWindows = ref<LyricsVisibility>({ desktop: false, taskbar: false })
+const lyricStyles = ref<Record<LyricWindowKind, LyricStyle>>({
+  desktop: readLyricStyle('desktop'),
+  taskbar: readLyricStyle('taskbar'),
+})
+
+async function toggleLyricWindow(kind: LyricWindowKind, visible: boolean) {
+  try {
+    const next = await bridge?.lyricsSet?.(kind, visible)
+    if (next) lyricWindows.value = next
+  } catch {
+    toast('切换失败', 'error')
+  }
+}
+
+function setLyricStyle(kind: LyricWindowKind, style: LyricStyle) {
+  lyricStyles.value = { ...lyricStyles.value, [kind]: style }
+  writeLyricStyle(kind, style)
+}
+
+/** 在字幕窗里点样式按钮时，设置页同步显示 */
+function onLyricStorage(e: StorageEvent) {
+  if (e.key === LYRIC_STYLE_KEY.desktop) {
+    lyricStyles.value = { ...lyricStyles.value, desktop: readLyricStyle('desktop') }
+  } else if (e.key === LYRIC_STYLE_KEY.taskbar) {
+    lyricStyles.value = { ...lyricStyles.value, taskbar: readLyricStyle('taskbar') }
+  }
+}
 
 const server = ref<ServerConfig>({
   serverUrl: '',
@@ -41,10 +83,16 @@ const proxyMode = ref('auto')
 const proxyRules = ref('')
 
 onMounted(async () => {
+  window.addEventListener('storage', onLyricStorage)
   try {
     const v = await bridge?.getCloseToTray?.()
     if (typeof v === 'boolean') closeToTray.value = v
   } catch { /* 网页版没有桌面桥 */ }
+
+  try {
+    const st = await bridge?.lyricsState?.()
+    if (st) lyricWindows.value = st
+  } catch { /* 忽略 */ }
 
   try {
     const cfg = await bridge?.getServerConfig?.()
@@ -56,6 +104,8 @@ onMounted(async () => {
     }
   } catch { /* 忽略 */ }
 })
+
+onUnmounted(() => window.removeEventListener('storage', onLyricStorage))
 
 async function saveNetwork() {
   const url = serverInput.value.trim()
@@ -273,6 +323,60 @@ async function chooseDir() {
           <div><kbd>↑</kbd> <kbd>↓</kbd> 音量</div>
           <div><kbd>M</kbd> 静音</div>
           <div><kbd>N</kbd> / <kbd>P</kbd> 下一首 / 上一首</div>
+        </div>
+      </div>
+
+      <!-- 字幕窗 -->
+      <div class="m3-card" style="margin-bottom: 16px">
+        <div class="card-head">
+          <UiIcon name="lyrics" :size="18" /> 字幕窗
+          <span class="card-sub">两种形式只能同时存在一个</span>
+        </div>
+
+        <div class="set-row">
+          <div class="set-label">
+            <div>桌面字幕</div>
+            <div class="card-sub">独立置顶窗口，可拖到任意位置；显示当前行与下一行</div>
+          </div>
+          <button
+            class="switch" :class="{ on: lyricWindows.desktop }"
+            role="switch" :aria-checked="lyricWindows.desktop"
+            @click="toggleLyricWindow('desktop', !lyricWindows.desktop)"
+          >
+            <span class="knob" />
+          </button>
+        </div>
+        <div class="tag-row" style="margin: 2px 0 8px">
+          <button
+            v-for="s in LYRIC_STYLES" :key="s"
+            class="chip" :class="{ plain: lyricStyles.desktop !== s }"
+            @click="setLyricStyle('desktop', s)"
+          >{{ LYRIC_STYLE_NAMES[s] }}</button>
+        </div>
+
+        <div class="set-row">
+          <div class="set-label">
+            <div>任务栏字幕</div>
+            <div class="card-sub">屏幕左下角一行歌词，鼠标可直接穿透，不挡操作</div>
+          </div>
+          <button
+            class="switch" :class="{ on: lyricWindows.taskbar }"
+            role="switch" :aria-checked="lyricWindows.taskbar"
+            @click="toggleLyricWindow('taskbar', !lyricWindows.taskbar)"
+          >
+            <span class="knob" />
+          </button>
+        </div>
+        <div class="tag-row" style="margin: 2px 0 8px">
+          <button
+            v-for="s in LYRIC_STYLES" :key="s"
+            class="chip" :class="{ plain: lyricStyles.taskbar !== s }"
+            @click="setLyricStyle('taskbar', s)"
+          >{{ LYRIC_STYLE_NAMES[s] }}</button>
+        </div>
+
+        <div class="card-sub">
+          样式：经典半透明 / 磨砂（Windows 11 原生亚克力）/ 液态（流动渐变 + 高光）。改动会实时应用到已打开的窗口。
         </div>
       </div>
 

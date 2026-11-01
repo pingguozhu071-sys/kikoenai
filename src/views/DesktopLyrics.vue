@@ -5,6 +5,9 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import UiIcon from '../components/UiIcon.vue'
+import {
+  LYRIC_STYLE_KEY, LYRIC_STYLE_NAMES, materialFor, readLyricStyle, writeLyricStyle, type LyricStyle,
+} from '../stores/lyricWindows'
 
 interface LyricsPayload {
   current: string
@@ -20,26 +23,34 @@ interface DesktopBridge {
   lyricsNextDisplay?: () => Promise<unknown>
   lyricsRequest?: () => Promise<LyricsPayload | null>
   /** Windows 11 原生亚克力（真实毛玻璃） */
-  lyricsSetMaterial?: (m: string) => void
+  lyricsSetMaterial?: (target: 'desktop' | 'taskbar', m: string) => void
 }
 
 const bridge = (window as unknown as { kikoeru?: DesktopBridge }).kikoeru
 
-/** 三种视觉：经典半透明 / 磨砂毛玻璃 / 液态玻璃 */
-type LyricStyle = 'classic' | 'frosted' | 'liquid'
-const STYLE_KEY = 'kikoeru-pc/lyricStyle'
+/** 三种视觉：经典半透明 / 磨砂毛玻璃 / 液态玻璃（与设置页共用一份） */
 const STYLE_ORDER: LyricStyle[] = ['classic', 'frosted', 'liquid']
-const STYLE_NAMES: Record<LyricStyle, string> = { classic: '经典', frosted: '磨砂', liquid: '液态' }
-const style = ref<LyricStyle>('frosted')
-const styleName = computed(() => STYLE_NAMES[style.value])
+const style = ref<LyricStyle>(readLyricStyle('desktop'))
+const styleName = computed(() => LYRIC_STYLE_NAMES[style.value])
 
+function syncMaterial() {
+  bridge?.lyricsSetMaterial?.('desktop', materialFor(style.value))
+}
 function applyStyle() {
-  localStorage.setItem(STYLE_KEY, style.value)
-  bridge?.lyricsSetMaterial?.(style.value === 'classic' ? 'none' : 'acrylic')
+  writeLyricStyle('desktop', style.value)
+  syncMaterial()
 }
 function cycleStyle() {
   style.value = STYLE_ORDER[(STYLE_ORDER.indexOf(style.value) + 1) % 3]
   applyStyle()
+}
+/** 设置页改了样式：另一个窗口写 localStorage，这里通过 storage 事件同步 */
+function onStorage(e: StorageEvent) {
+  if (e.key !== LYRIC_STYLE_KEY.desktop) return
+  const next = readLyricStyle('desktop')
+  if (next === style.value) return
+  style.value = next
+  syncMaterial()
 }
 
 const currentLine = ref('桌面字幕已就绪')
@@ -59,9 +70,8 @@ function applyPayload(p: LyricsPayload) {
 
 onMounted(async () => {
   document.body.classList.add('is-lyrics-window')
-  const saved = localStorage.getItem(STYLE_KEY) as LyricStyle | null
-  if (saved && STYLE_ORDER.includes(saved)) style.value = saved
   applyStyle()
+  window.addEventListener('storage', onStorage)
   // 窗口可能晚于推送创建，主动拉一次当前状态
   try {
     const init = await bridge?.lyricsRequest?.()
@@ -77,6 +87,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   off?.()
+  window.removeEventListener('storage', onStorage)
   document.body.classList.remove('is-lyrics-window')
 })
 

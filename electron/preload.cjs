@@ -56,8 +56,11 @@ contextBridge.exposeInMainWorld('kikoeru', {
   lyricsToggle: () => ipcRenderer.invoke('lyrics:toggle'),
   /** 任务栏字幕（屏幕左下角一行歌词） */
   taskbarLyricsToggle: () => ipcRenderer.invoke('lyrics:taskbar-toggle'),
-  /** 桌面字幕的窗口材质：acrylic / none */
-  lyricsSetMaterial: (m) => ipcRenderer.send('lyrics:material', m),
+  /** 显式开关字幕窗：target = desktop | taskbar（两者互斥） */
+  lyricsSet: (target, visible) => ipcRenderer.invoke('lyrics:set', target, !!visible),
+  lyricsState: () => ipcRenderer.invoke('lyrics:state'),
+  /** 字幕窗材质：acrylic / none */
+  lyricsSetMaterial: (target, m) => ipcRenderer.send('lyrics:material', target, m),
   lyricsUpdate: (payload) => ipcRenderer.send('lyrics:update', payload),
   lyricsRequest: () => ipcRenderer.invoke('lyrics:request'),
   lyricsClose: () => ipcRenderer.invoke('lyrics:close'),

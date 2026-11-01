@@ -1242,8 +1242,37 @@ function toggleTaskbarLyricsWindow() {
     taskbarWin.hide()
     return false
   }
+  if (lyricWin && !lyricWin.isDestroyed()) lyricWin.hide()
   createTaskbarLyricsWindow()
   return true
+}
+
+/** 两种字幕窗的可见性（设置页开关用） */
+function lyricsWindowsState() {
+  return {
+    desktop: !!(lyricWin && !lyricWin.isDestroyed() && lyricWin.isVisible()),
+    taskbar: !!(taskbarWin && !taskbarWin.isDestroyed() && taskbarWin.isVisible()),
+  }
+}
+
+/** 显式显示/隐藏，并保证两种形式只存在一个 */
+function setLyricsWindow(target, visible) {
+  if (target === 'taskbar') {
+    if (visible) {
+      if (lyricWin && !lyricWin.isDestroyed()) lyricWin.hide()
+      createTaskbarLyricsWindow()
+    } else if (taskbarWin && !taskbarWin.isDestroyed()) {
+      taskbarWin.hide()
+    }
+  } else {
+    if (visible) {
+      if (taskbarWin && !taskbarWin.isDestroyed()) taskbarWin.hide()
+      createLyricWindow()
+    } else if (lyricWin && !lyricWin.isDestroyed()) {
+      lyricWin.hide()
+    }
+  }
+  return lyricsWindowsState()
 }
 
 function createWindow() {
@@ -2045,12 +2074,13 @@ function createWindow() {
 
 // ---------------------------------------------------------------- 托盘 / 快捷键
 
-/** 桌面字幕窗开关：托盘、任务栏按钮、菜单共用 */
+/** 桌面字幕窗开关：托盘、任务栏按钮、菜单共用；与任务栏字幕互斥 */
 function toggleLyricsWindow() {
   if (lyricWin && !lyricWin.isDestroyed() && lyricWin.isVisible()) {
     lyricWin.hide()
     return false
   }
+  if (taskbarWin && !taskbarWin.isDestroyed()) taskbarWin.hide()
   createLyricWindow()
   return true
 }
@@ -2304,12 +2334,15 @@ if (!gotLock) {
     })
 
     ipcMain.handle('lyrics:taskbar-toggle', () => ({ visible: toggleTaskbarLyricsWindow() }))
+    ipcMain.handle('lyrics:set', (_e, target, visible) => setLyricsWindow(target, !!visible))
+    ipcMain.handle('lyrics:state', () => lyricsWindowsState())
 
-    // Windows 11 原生亚克力：桌面字幕的"磨砂/液态"用真实背景模糊
-    ipcMain.on('lyrics:material', (_e, material) => {
-      if (!lyricWin || lyricWin.isDestroyed()) return
+    // Windows 11 原生亚克力：桌面字幕/任务栏字幕的"磨砂/液态"用真实背景模糊
+    ipcMain.on('lyrics:material', (_e, target, material) => {
+      const win = target === 'taskbar' ? taskbarWin : lyricWin
+      if (!win || win.isDestroyed()) return
       try {
-        lyricWin.setBackgroundMaterial(material === 'acrylic' ? 'acrylic' : 'none')
+        win.setBackgroundMaterial(material === 'acrylic' ? 'acrylic' : 'none')
       } catch { /* 旧系统不支持，退回普通半透明 */ }
     })
 
