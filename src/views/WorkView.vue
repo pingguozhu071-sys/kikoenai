@@ -94,7 +94,11 @@ const totalSize = computed(() => {
 
 const isCurrentWork = computed(() => current()?.workId === workId.value)
 
+/** 防止连点相似作品时，上一部作品的请求回来覆盖页面 */
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true
   error.value = ''
   work.value = null
@@ -103,35 +107,53 @@ async function load() {
   marked.value = null
   try {
     const [w, t] = await Promise.all([getWork(workId.value), getTracks(workId.value)])
+    if (seq !== loadSeq) return
     work.value = w
     tracks.value = Array.isArray(t) ? t : []
   } catch (e) {
+    if (seq !== loadSeq) return
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
+
+  if (seq !== loadSeq) return
 
   // 相似作品：先试推荐接口，为空则退回同社团作品（该接口匿名可用）
   similarLoading.value = true
   try {
     const nb = await postItemNeighbors(workId.value)
+    if (seq !== loadSeq) return
     let list = (nb.works ?? []).filter((w) => w.id !== workId.value)
     if (list.length) {
       similarLabel.value = '相似作品'
       similarSub.value = '听过这部的人也听了'
     } else if (work.value?.circle_id) {
       const cw = await getWorksByCategory('circle', work.value.circle_id, 1, 'release', 'desc', 12)
+      if (seq !== loadSeq) return
       list = (cw.works ?? []).filter((w) => w.id !== workId.value)
       similarLabel.value = '同社团作品'
       similarSub.value = circleName.value
     }
     similar.value = list.slice(0, 12)
   } catch {
-    similar.value = []
+    if (seq === loadSeq) similar.value = []
   } finally {
-    similarLoading.value = false
+    if (seq === loadSeq) similarLoading.value = false
   }
 }
+
+/** 点相似作品时路由参数变了，但组件会被复用，必须手动重新加载 */
+watch(workId, (id) => {
+  if (!id) return
+  similarLabel.value = '相似作品'
+  similarSub.value = '听过这部的人也听了'
+  scrolled.value = false
+  playlistOpen.value = false
+  voteOpen.value = false
+  if (scroller.value) scroller.value.scrollTop = 0
+  void load()
+})
 
 // ---------- 字幕 ----------
 // 自动绑定由播放器负责（切歌即匹配）；这里只处理手动指定某条音轨用哪个字幕文件
