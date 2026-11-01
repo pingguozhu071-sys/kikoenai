@@ -118,13 +118,16 @@ onUnmounted(() => {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .lp-glass {
-  position: absolute; inset: 0; z-index: 0;
-  width: 100%; height: 100%;
+  position: absolute; inset: -24px; z-index: 0;
   opacity: 0.85;
   pointer-events: none;
-  transform: scale(1.08);
+  filter: blur(14px) saturate(1.3);
 }
 .lp > *:not(.lp-glass) { position: relative; z-index: 1; }
+
+:global(body.glass-dead) .lp {
+  background: linear-gradient(170deg, rgba(28, 25, 34, 0.92), rgba(12, 11, 16, 0.95));
+}
 
 .lp-head {
   display: flex; align-items: center; gap: 8px;

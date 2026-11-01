@@ -23,6 +23,38 @@ export function useScreenBackdrop(canvas: Ref<HTMLCanvasElement | null>, mode: (
   let running = false
   let last = 0
   let display: ScreenSource['display'] | null = null
+  /** 取样结果坏掉（纯绿/洋红这类色度错帧）时的冷却期 */
+  let deadUntil = 0
+  let lastCheck = 0
+  let lastVisibility = ''
+
+  /** 采样点是不是典型的"色度错帧"：大片纯绿或红绿/洋红杂交 */
+  function looksCorrupt(ctx: CanvasRenderingContext2D, cw: number, ch: number): boolean {
+    const pts: [number, number][] = [
+      [0.2, 0.5], [0.5, 0.5], [0.8, 0.5], [0.5, 0.2], [0.5, 0.8],
+    ]
+    let bad = 0
+    for (const [fx, fy] of pts) {
+      const d = ctx.getImageData(Math.floor(cw * fx), Math.floor(ch * fy), 1, 1).data
+      const [r, g, b] = [d[0], d[1], d[2]]
+      const green = g > 150 && g > r * 1.7 && g > b * 1.7
+      const magenta = r > 150 && b > 150 && g < 90
+      if (green || magenta) bad++
+    }
+    return bad >= 4
+  }
+
+  function setCanvasVisible(on: boolean) {
+    const c = canvas.value
+    if (!c) return
+    // 用 visibility 而不是 opacity：opacity 由各样式自己定，不能被内联覆盖
+    const v = on ? '' : 'hidden'
+    if (lastVisibility === v) return
+    lastVisibility = v
+    c.style.visibility = v
+    // 坏帧期间整窗退回不透明深色，文字仍然看得清
+    document.body.classList.toggle('glass-dead', !on)
+  }
 
   function draw(now: number) {
     const c = canvas.value
@@ -44,6 +76,14 @@ export function useScreenBackdrop(canvas: Ref<HTMLCanvasElement | null>, mode: (
     const ctx = c.getContext('2d')
     if (!ctx) return
     const m = mode()
+
+    // 冷却期内不画：避免把损坏帧（纯绿/色度花屏）铺到桌面上
+    if (now < deadUntil) {
+      ctx.clearRect(0, 0, cw, ch)
+      setCanvasVisible(false)
+      return
+    }
+
     ctx.clearRect(0, 0, cw, ch)
 
     // 往外多画一圈，模糊采样不会在边缘吃到透明，整块保持不透明
@@ -55,11 +95,7 @@ export function useScreenBackdrop(canvas: Ref<HTMLCanvasElement | null>, mode: (
     const srcW = sw + pad * 2 * kx
     const srcH = sh + pad * 2 * ky
 
-    ctx.filter = m === 'classic'
-      ? 'blur(15px) brightness(0.72) saturate(1.15)'
-      : m === 'liquid'
-        ? 'blur(8px) saturate(1.55)'
-        : 'blur(22px) saturate(1.4)'
+    // 模糊交给 CSS：视频帧经 2D filter 处理在部分显卡上会出绿帧
     try {
       ctx.drawImage(v, srcX, srcY, srcW, srcH, -pad, -pad, cw + pad * 2, ch + pad * 2)
     } catch {
@@ -68,14 +104,25 @@ export function useScreenBackdrop(canvas: Ref<HTMLCanvasElement | null>, mode: (
     if (m === 'liquid') {
       // 液态：再叠一层轻微错位的自身，做出折射般的流动，而不是单纯的光斑动画
       const t = now / 1000
-      ctx.globalAlpha = 0.45
-      ctx.filter = 'blur(5px) saturate(1.7)'
+      ctx.globalAlpha = 0.4
       const dx = Math.sin(t * 0.9) * 4 * kx
       const dy = Math.cos(t * 0.7) * 3 * ky
       try {
         ctx.drawImage(v, srcX - dx, srcY - dy, srcW, srcH, -pad, -pad, cw + pad * 2, ch + pad * 2)
       } catch { /* 忽略 */ }
       ctx.globalAlpha = 1
+    }
+
+    // 每半秒抽查一次；坏帧就藏掉整层，退回 CSS 底色
+    if (now - lastCheck > 500) {
+      lastCheck = now
+      if (looksCorrupt(ctx, cw, ch)) {
+        deadUntil = now + 5000
+        ctx.clearRect(0, 0, cw, ch)
+        setCanvasVisible(false)
+      } else {
+        setCanvasVisible(true)
+      }
     }
   }
 

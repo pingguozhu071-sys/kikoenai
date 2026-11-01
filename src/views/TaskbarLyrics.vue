@@ -156,10 +156,9 @@ onUnmounted(() => {
 .tbl.paused { opacity: 0.64; }
 
 .glass {
-  position: absolute; inset: 0; z-index: 0;
-  width: 100%; height: 100%;
+  position: absolute; inset: -28px; z-index: 0;
   pointer-events: none;
-  transform: scale(1.08);
+  filter: blur(16px) saturate(1.35);
 }
 .tbl > *:not(.glass) { position: relative; z-index: 1; }
 
@@ -168,7 +167,7 @@ onUnmounted(() => {
   border-color: rgba(255, 255, 255, 0.09);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 26px rgba(0, 0, 0, 0.40);
 }
-.tbl.style-classic .glass { opacity: 0.55; }
+.tbl.style-classic .glass { opacity: 0.55; filter: blur(10px) brightness(0.75) saturate(1.1); }
 
 .tbl.style-frosted {
   background: linear-gradient(160deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.04));
@@ -182,13 +181,19 @@ onUnmounted(() => {
   border-color: rgba(255, 255, 255, 0.26);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26), 0 10px 30px rgba(0, 0, 0, 0.34);
 }
-.tbl.style-liquid .glass { opacity: 0.92; }
+.tbl.style-liquid .glass { opacity: 0.92; filter: blur(9px) saturate(1.55); }
 .tbl.style-liquid::after {
   content: '';
   position: absolute; inset: 0; z-index: 0;
   background: linear-gradient(108deg, transparent 32%, rgba(255, 255, 255, 0.18) 48%, transparent 62%);
   transform: translateX(-70%);
   animation: tblSheen 6.5s ease-in-out infinite;
+}
+
+/* 取样坏帧时退回不透明深色玻璃 */
+:global(body.glass-dead) .tbl.style-frosted,
+:global(body.glass-dead) .tbl.style-liquid {
+  background: linear-gradient(160deg, rgba(30, 27, 36, 0.90), rgba(12, 11, 16, 0.94));
 }
 
 @keyframes tblSheen {

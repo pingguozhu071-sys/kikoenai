@@ -168,10 +168,9 @@ function nextDisplay() { void bridge?.lyricsNextDisplay?.() }
 
 /* 实时背景：由 canvas 每 90ms 从屏幕流取一次 */
 .glass {
-  position: absolute; inset: 0; z-index: 0;
-  width: 100%; height: 100%;
+  position: absolute; inset: -28px; z-index: 0;
   pointer-events: none;
-  transform: scale(1.06);
+  filter: blur(16px) saturate(1.35);
 }
 
 .dlw > *:not(.glass) { position: relative; z-index: 1; }
@@ -181,7 +180,7 @@ function nextDisplay() { void bridge?.lyricsNextDisplay?.() }
   border-color: rgba(255, 255, 255, 0.09);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 14px 38px rgba(0, 0, 0, 0.42);
 }
-.dlw.style-classic .glass { opacity: 0.55; }
+.dlw.style-classic .glass { opacity: 0.55; filter: blur(11px) brightness(0.75) saturate(1.1); }
 .dlw.style-classic:hover { background: linear-gradient(165deg, rgba(30, 27, 36, 0.84), rgba(11, 10, 15, 0.90)); }
 
 .dlw.style-frosted {
@@ -203,7 +202,7 @@ function nextDisplay() { void bridge?.lyricsNextDisplay?.() }
     inset 0 -1px 0 rgba(0, 0, 0, 0.18),
     0 18px 46px rgba(0, 0, 0, 0.36);
 }
-.dlw.style-liquid .glass { opacity: 0.92; }
+.dlw.style-liquid .glass { opacity: 0.92; filter: blur(9px) saturate(1.55); }
 /* 液态的高光扫过，压在实时画面之上 */
 .dlw.style-liquid::after {
   content: '';
@@ -214,6 +213,12 @@ function nextDisplay() { void bridge?.lyricsNextDisplay?.() }
 }
 .dlw.style-liquid .dlw-current {
   text-shadow: 0 0 22px rgba(190, 160, 255, 0.45), 0 2px 12px rgba(0, 0, 0, 0.55);
+}
+
+/* 取样坏帧时（纯绿/洋红花屏）退回不透明深色玻璃，保证可读 */
+:global(body.glass-dead) .dlw.style-frosted,
+:global(body.glass-dead) .dlw.style-liquid {
+  background: linear-gradient(160deg, rgba(30, 27, 36, 0.88), rgba(12, 11, 16, 0.93));
 }
 
 @keyframes liquidSheen {
