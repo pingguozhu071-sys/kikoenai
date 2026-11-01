@@ -2466,7 +2466,11 @@ if (!gotLock) {
         // 封面可能是 /kapi/cover/xxx 这种相对地址，先补成真实服务器地址
         let target = String(rawUrl || '')
         if (!target) return
-        if (target.startsWith('/')) target = API_TARGET + target
+        if (target.startsWith('/')) {
+          // /kapi 是本地代理前缀，服务端真实路径是 /api
+          const remotePath = target.replace(/^\/kapi\//, '/api/')
+          target = API_TARGET + remotePath
+        }
         const url = validateRemoteUrl(target, { allowHosts: apiHosts() })
         if (!url) return
         const res = await net.fetch(url)

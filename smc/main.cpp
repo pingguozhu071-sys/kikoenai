@@ -4,6 +4,10 @@
 #define _WIN32_WINNT 0x0A00
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <shobjidl.h>
+#include <propkey.h>
+#include <propvarutil.h>
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Media.h>
@@ -43,6 +47,60 @@ namespace
         if (!shell) return;
         auto fn = reinterpret_cast<Fn>(GetProcAddress(shell, "SetCurrentProcessExplicitAppUserModelID"));
         if (fn) fn(id);
+    }
+
+    /**
+     * 媒体面板按 AUMID 去开始菜单里找快捷方式，找到才显示应用名和图标。
+     * 这里确保 %APPDATA%\...\Start Menu\Programs\Kikoenai.lnk 存在且带同一个 AUMID。
+     */
+    void EnsureAumidShortcut()
+    {
+        wchar_t self[MAX_PATH] = {};
+        if (!GetModuleFileNameW(nullptr, self, MAX_PATH)) return;
+
+        std::wstring exe(self);
+        for (int i = 0; i < 3; i++) // resources\smtc\Kikoenai.Media.exe -> 安装根目录
+        {
+            auto slash = exe.find_last_of(L"\\/");
+            if (slash == std::wstring::npos) return;
+            exe.erase(slash);
+        }
+        exe += L"\\Kikoenai.exe";
+        if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+
+        wchar_t appdata[MAX_PATH] = {};
+        if (FAILED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) return;
+        std::wstring lnk = std::wstring(appdata) +
+            L"\\Microsoft\\Windows\\Start Menu\\Programs\\Kikoenai.lnk";
+
+        IShellLinkW* link = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                    IID_PPV_ARGS(&link))))
+            return;
+        link->SetPath(exe.c_str());
+        link->SetIconLocation(exe.c_str(), 0);
+        link->SetDescription(L"Kikoenai");
+
+        IPropertyStore* store = nullptr;
+        if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&store))))
+        {
+            PROPVARIANT pv;
+            if (SUCCEEDED(InitPropVariantFromString(L"Kikoenai.Player", &pv)))
+            {
+                store->SetValue(PKEY_AppUserModel_ID, pv);
+                store->Commit();
+                PropVariantClear(&pv);
+            }
+            store->Release();
+        }
+
+        IPersistFile* file = nullptr;
+        if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file))))
+        {
+            file->Save(lnk.c_str(), TRUE);
+            file->Release();
+        }
+        link->Release();
     }
 
     void Emit(const std::string& line)
@@ -88,6 +146,7 @@ int main()
 {
     try { init_apartment(apartment_type::multi_threaded); } catch (...) { return 0; }
     SetAumid(L"Kikoenai.Player");
+    EnsureAumidShortcut();
 
     MediaPlayer player;
     player.CommandManager().IsEnabled(false);

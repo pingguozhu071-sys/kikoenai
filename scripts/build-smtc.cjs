@@ -34,7 +34,7 @@ fs.writeFileSync(bat, [
   '@echo off',
   'chcp 65001 >nul',
   `call "${vcvars}" >nul`,
-  `cl /nologo /std:c++20 /EHsc /O2 /utf-8 /DUNICODE /D_UNICODE "${path.join(root, 'smc', 'main.cpp')}" /link /SUBSYSTEM:CONSOLE windowsapp.lib RuntimeObject.lib /OUT:"${exe}"`,
+  `cl /nologo /std:c++20 /EHsc /O2 /utf-8 /DUNICODE /D_UNICODE "${path.join(root, 'smc', 'main.cpp')}" /link /SUBSYSTEM:CONSOLE windowsapp.lib RuntimeObject.lib shell32.lib ole32.lib propsys.lib /OUT:"${exe}"`,
 ].join('\r\n'))
 
 const run = spawnSync('cmd.exe', ['/c', bat], { cwd: root, encoding: 'utf8' })
