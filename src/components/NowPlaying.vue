@@ -83,10 +83,6 @@ const activeCount = computed(() => downloadState.tasks.filter((t) => t.state ===
   <Teleport to="body">
     <Transition name="np" :duration="{ enter: 480, leave: 240 }">
       <section v-if="ui.nowPlaying && item" class="np-sheet" aria-label="正在播放">
-        <!-- 背景：封面模糊 + 渐隐 -->
-        <div class="np-bg" :style="{ backgroundImage: `url(${cover})` }" />
-        <div class="np-bg-mask" />
-
         <header class="np-head">
           <button class="icon-btn" title="收起 (Esc)" @click="close">
             <UiIcon name="expand_more" :size="24" />

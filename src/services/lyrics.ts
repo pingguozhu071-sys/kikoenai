@@ -64,9 +64,9 @@ function toSeconds(stamp: string): number {
 }
 
 const LRC_TIME = /\[(\d{1,2}:\d{1,2}(?:[.:]\d{1,3})?)\]/g
-const SRT_TIME = /(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})/
+/** SRT / VTT 的 cue 行：小时可选，毫秒用 . 或 , */
+const CUE_TIME = /^\s*((?:\d{1,3}:)?\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*((?:\d{1,3}:)?\d{1,2}:\d{2}[.,]\d{1,3})/
 const ASS_TIME = /Dialogue:\s*[^,]*,\s*([\d:.]+)\s*,\s*([\d:.]+)\s*,([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)$/
-const VTT_TIME = /^\s*(\d{1,2}:\d{2}(?:[.:]\d{1,3})?)\s*-->\s*(\d{1,2}:\d{2}(?:[.:]\d{1,3})?)/
 
 /** 去掉 ASS 样式标签 {\i1} 之类与 HTML 标签 */
 function stripMarkup(s: string): string {
@@ -78,25 +78,36 @@ function stripMarkup(s: string): string {
     .trim()
 }
 
+/** SRT / VTT 共用的 cue 解析：兼容 hh:mm:ss,mmm 与 mm:ss.mmm、可选 cue 编号/设置行 */
+function parseCueBlocks(src: string): LrcLine[] {
+  const lines: LrcLine[] = []
+  for (const block of src.split(/\r?\n\r?\n/)) {
+    const rows = block.split(/\r?\n/).filter((l) => l.trim())
+    if (!rows.length) continue
+    let at = -1
+    for (let i = 0; i < rows.length; i++) {
+      if (CUE_TIME.test(rows[i])) { at = i; break }
+    }
+    if (at < 0) continue
+    const m = rows[at].match(CUE_TIME)
+    if (!m) continue
+    const body = rows.slice(at + 1).map(stripMarkup).join(' ').trim()
+    if (body) lines.push({ time: toSeconds(m[1]), text: body })
+  }
+  return lines.sort((a, b) => a.time - b.time)
+}
+
 export function parseSubtitle(text: string, ext: string): LrcLine[] {
   const e = ext.toLowerCase()
   const src = text.replace(/^\uFEFF/, '')
 
-  if (e === '.srt') {
-    const lines: LrcLine[] = []
-    for (const block of src.split(/\r?\n\r?\n/)) {
-      const m = block.match(SRT_TIME)
-      if (!m) continue
-      const body = block
-        .split(/\r?\n/)
-        .filter((l) => l.trim() && !SRT_TIME.test(l) && !/^\d+$/.test(l.trim()))
-        .map(stripMarkup)
-        .join(' ')
-        .trim()
-      if (body) lines.push({ time: toSeconds(m[1]), text: body })
-    }
-    return lines.sort((a, b) => a.time - b.time)
+  // 先看内容：只要出现 cue 时间行就按 SRT/VTT 解析，不依赖扩展名
+  if (src.includes('-->')) {
+    const cues = parseCueBlocks(src)
+    if (cues.length) return cues
   }
+
+  if (e === '.srt' || e === '.vtt') return []
 
   if (e === '.ass' || e === '.ssa') {
     const lines: LrcLine[] = []
@@ -104,17 +115,6 @@ export function parseSubtitle(text: string, ext: string): LrcLine[] {
       const m = raw.match(ASS_TIME)
       if (!m) continue
       const body = stripMarkup(m[8] || '')
-      if (body) lines.push({ time: toSeconds(m[1]), text: body })
-    }
-    return lines.sort((a, b) => a.time - b.time)
-  }
-
-  if (e === '.vtt') {
-    const lines: LrcLine[] = []
-    for (const raw of src.split(/\r?\n/)) {
-      const m = raw.match(VTT_TIME)
-      if (!m) continue
-      const body = stripMarkup(raw.replace(VTT_TIME, ''))
       if (body) lines.push({ time: toSeconds(m[1]), text: body })
     }
     return lines.sort((a, b) => a.time - b.time)
