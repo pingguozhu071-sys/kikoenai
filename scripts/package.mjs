@@ -70,6 +70,18 @@ function main() {
   fs.rmSync(path.join(appDir, 'electron', 'guard.test.cjs'), { force: true })
   fs.rmSync(path.join(appDir, 'electron', 'local.test.cjs'), { force: true })
 
+  // Windows 媒体面板宿主：编译不出来就跳过（该功能自动降级）
+  console.log('编译媒体面板宿主…')
+  try {
+    execFileSync(process.execPath, [path.join(root, 'scripts', 'build-smtc.cjs')], { cwd: root, stdio: 'inherit' })
+  } catch { console.warn('[smtc] 编译失败，媒体面板功能不可用') }
+  const smtcExe = path.join(root, 'smc', 'build', 'Kikoenai.Media.exe')
+  if (fs.existsSync(smtcExe)) {
+    const smtcDir = path.join(outRoot, 'resources', 'smtc')
+    fs.mkdirSync(smtcDir, { recursive: true })
+    fs.copyFileSync(smtcExe, path.join(smtcDir, 'Kikoenai.Media.exe'))
+  }
+
   // 产物一致性：装进去的那份必须就是刚构建出来的那份
   const distIndex = path.join(root, 'dist', 'index.html')
   const packedIndex = path.join(appDir, 'dist', 'index.html')

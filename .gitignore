@@ -31,3 +31,6 @@ scripts/patch-focus.mjs
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# SMTC 宿主编译产物
+smc/build/

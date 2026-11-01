@@ -39,6 +39,26 @@ try {
   app.setPath('userData', path.join(app.getPath('appData'), 'KikoeruPC'))
 } catch { /* 极端情况下忽略，退回默认目录 */ }
 
+// 任务栏与媒体面板使用同一身份
+try { app.setAppUserModelId('Kikoenai.Player') } catch { /* 非 Windows 忽略 */ }
+
+/**
+ * 登记 AUMID：Windows 媒体面板按 AUMID 查应用名，没登记就显示"未知应用"。
+ * 写 HKCU\Software\Classes\CLSID\{固定 GUID}\Kikoenai.Player，
+ * DisplayName 是面板上显示的名字，IconPath 是面板里的小图标。
+ */
+function registerAumid() {
+  if (process.platform !== 'win32') return
+  try {
+    const key = 'HKCU\\Software\\Classes\\CLSID\\{7B1F4C2A-9E63-4B0D-9F1C-2D5A6E8B3C74}\\Kikoenai.Player'
+    const icon = path.join(process.execPath)
+    execFileSync('reg', ['add', key, '/v', 'DisplayName', '/t', 'REG_SZ', '/d', 'Kikoenai', '/f'],
+      { windowsHide: true, stdio: 'ignore' })
+    execFileSync('reg', ['add', key, '/v', 'IconPath', '/t', 'REG_SZ', '/d', `${icon},0`, '/f'],
+      { windowsHide: true, stdio: 'ignore' })
+  } catch { /* 注册失败只影响面板上的应用名 */ }
+}
+
 function logDir() {
   try { return path.join(app.getPath('userData'), 'logs') } catch { return '' }
 }
@@ -2282,7 +2302,88 @@ function buildTray() {
   })
 }
 
-function registerMediaKeys() {
+// ---------------------------------------------------------------- Windows 媒体面板（SMTC）
+// Electron 自身不注册系统媒体会话；用一个极小的 C++/WinRT 宿主进程代持，
+// stdin 推状态、stdout 收按键，主窗只负责执行。
+let smtcProc = null
+let smtcReady = false
+let lastSmtcState = null
+
+function smtcExePath() {
+  if (app.isPackaged) return path.join(process.resourcesPath, 'smtc', 'Kikoenai.Media.exe')
+  return path.join(__dirname, '..', 'smc', 'build', 'Kikoenai.Media.exe')
+}
+
+function smtcLine(line) {
+  if (!smtcProc || !smtcProc.stdin || smtcProc.stdin.destroyed) return
+  try { smtcProc.stdin.write(line + '\n') } catch { /* 宿主已退出 */ }
+}
+
+function smtcClean(v, max = 300) {
+  return String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ').slice(0, max)
+}
+
+function smtcSendState(state) {
+  lastSmtcState = state
+  if (!smtcReady) return
+  smtcLine('T\t' + smtcClean(state.title))
+  smtcLine('A\t' + smtcClean(state.artist))
+  smtcLine('B\t' + smtcClean(state.album || 'Kikoenai'))
+  smtcLine('P\t' + (state.playing ? '1' : '0'))
+  smtcLine('NX\t' + (state.canNext ? '1' : '0'))
+  smtcLine('PV\t' + (state.canPrev ? '1' : '0'))
+  smtcLine('DUR\t' + Math.max(0, Math.round(Number(state.durationMs) || 0)))
+  smtcLine('POS\t' + Math.max(0, Math.round(Number(state.positionMs) || 0)))
+}
+
+function smtcStart() {
+  if (process.platform !== 'win32') return false
+  const exe = smtcExePath()
+  if (!fs.existsSync(exe)) return false
+  try {
+    smtcProc = spawn(exe, [], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] })
+  } catch {
+    smtcProc = null
+    return false
+  }
+  smtcReady = true
+  let buf = ''
+  smtcProc.stdout.setEncoding('utf8')
+  smtcProc.stdout.on('data', (chunk) => {
+    buf += chunk
+    let at
+    while ((at = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, at).trim()
+      buf = buf.slice(at + 1)
+      if (!line || !mainWindow || mainWindow.isDestroyed()) continue
+      if (line === 'toggle' || line === 'next' || line === 'prev') {
+        mainWindow.webContents.send('player:command', line)
+      } else if (line.startsWith('seek-to\t')) {
+        const ms = Number(line.slice(8))
+        if (Number.isFinite(ms)) {
+          mainWindow.webContents.send('player:command', { type: 'seek-to', positionMs: ms })
+        }
+      }
+    }
+  })
+  smtcProc.on('exit', () => { smtcProc = null; smtcReady = false })
+  smtcProc.on('error', () => { smtcProc = null; smtcReady = false })
+  if (lastSmtcState) smtcSendState(lastSmtcState)
+  return true
+}
+
+function smtcStop() {
+  if (!smtcProc) return
+  try { smtcLine('Q') } catch { /* 忽略 */ }
+  const proc = smtcProc
+  setTimeout(() => { try { proc.kill() } catch { /* 已退出 */ } }, 300)
+  smtcProc = null
+  smtcReady = false
+}
+
+function registerMediaKeys(smtcOwnsKeys) {
+  // SMTC 一旦建立，媒体键由系统面板接管；再注册全局快捷键会把面板顶掉
+  if (smtcOwnsKeys) return
   const send = (action) => () => mainWindow?.webContents.send('media-key', action)
   const binds = {
     MediaPlayPause: 'toggle',
@@ -2335,7 +2436,10 @@ if (!gotLock) {
 
     createWindow()
     buildTray()
-    registerMediaKeys()
+    // AUMID 登记：Windows 媒体面板要靠它显示应用名与图标
+    registerAumid()
+    // 先尝试接管系统媒体面板；成功时媒体键交给面板，避免全局快捷键顶掉它
+    registerMediaKeys(smtcStart())
     bootDownloads()
 
     // 渲染层报错也进日志：GUI 下没有控制台，否则出问题完全查不到
@@ -2353,12 +2457,33 @@ if (!gotLock) {
       refreshThumbar()
     })
 
+    // ---- Windows 媒体面板 ----
+    ipcMain.on('smtc:state', (_e, state) => {
+      if (state && typeof state === 'object') smtcSendState(state)
+    })
+    ipcMain.on('smtc:cover-url', async (_e, rawUrl) => {
+      try {
+        // 封面可能是 /kapi/cover/xxx 这种相对地址，先补成真实服务器地址
+        let target = String(rawUrl || '')
+        if (!target) return
+        if (target.startsWith('/')) target = API_TARGET + target
+        const url = validateRemoteUrl(target, { allowHosts: apiHosts() })
+        if (!url) return
+        const res = await net.fetch(url)
+        if (!res.ok) return
+        const buf = Buffer.from(await res.arrayBuffer())
+        if (!buf.length || buf.length > 6_000_000) return
+        const file = path.join(app.getPath('userData'), 'smtc-cover.img')
+        fs.writeFileSync(file, buf)
+        smtcLine('C\t' + file)
+      } catch { /* 封面失败不影响播放 */ }
+    })
+
     ipcMain.handle('kikoeru:config', () => ({
       apiBase: API_TARGET,
       proxy: activeProxy,
       version: app.getVersion(),
       platform: process.platform,
-      acrylic: ACRYLIC_OK,
       serverUrl: API_TARGET,
       proxyMode: PROXY_MODE,
       proxyRules: PROXY_RULES,
@@ -2724,6 +2849,7 @@ if (!gotLock) {
     quitting = true
     // 安装/卸载模式没有加载任务列表，别用空数组覆盖真实记录
     if (!INSTALL_MODE && !UNINSTALL_MODE) flushDownloads()
+    smtcStop()
   })
   app.on('will-quit', () => globalShortcut.unregisterAll())
   app.on('activate', () => {

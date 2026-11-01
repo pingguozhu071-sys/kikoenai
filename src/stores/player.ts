@@ -118,6 +118,19 @@ interface LyricsBridge {
   resolveLocal?: (opts: { workId: number; fileName: string }) => Promise<string | null>
   setPlayerState?: (p: { playing: boolean; title: string }) => void
   lyricsQueueUpdate?: (q: LyricsQueue) => void
+  smtcState?: (s: SmtcState) => void
+  smtcCoverUrl?: (url: string) => void
+}
+
+export interface SmtcState {
+  title: string
+  artist: string
+  album: string
+  playing: boolean
+  positionMs: number
+  durationMs: number
+  canNext: boolean
+  canPrev: boolean
 }
 
 export interface LyricsQueue {
@@ -131,6 +144,24 @@ function pushPlayerState() {
   const bridge = (window as unknown as { kikoeru?: LyricsBridge }).kikoeru
   const item = current()
   bridge?.setPlayerState?.({ playing: player.playing, title: item?.title ?? '' })
+  pushSmtc()
+}
+
+/** Windows 媒体面板状态（曲目/进度/可否切歌） */
+function pushSmtc() {
+  const bridge = (window as unknown as { kikoeru?: LyricsBridge }).kikoeru
+  const item = current()
+  if (!item || !bridge?.smtcState) return
+  bridge.smtcState({
+    title: item.title,
+    artist: item.workTitle,
+    album: 'Kikoenai',
+    playing: player.playing,
+    positionMs: Math.round((Number.isFinite(audio.currentTime) ? audio.currentTime : 0) * 1000),
+    durationMs: Math.round((Number.isFinite(player.duration) ? player.duration : 0) * 1000),
+    canNext: player.playlist.length > 1,
+    canPrev: player.playlist.length > 1,
+  })
 }
 
 let lastPushedIdx = -2
@@ -173,6 +204,8 @@ const POS_KEY = 'kikoeru-pc/positions'
 let lastItem: PlaylistItem | null = null
 let pendingPosition: number | null = null
 let lastPositionSave = 0
+let lastSmtcPush = 0
+let lastSmtcCoverKey = ''
 /** 本地文件失败后只自动回退一次，避免来回切 */
 let localFallbackUsed = false
 
@@ -244,6 +277,20 @@ audio.addEventListener('timeupdate', () => {
   if (!player.scrubbing) player.currentTime = audio.currentTime
   readBuffered()
   notifyLyrics()
+  // 系统媒体面板的进度每秒推一次
+  if (Date.now() - lastSmtcPush > 1000) {
+    lastSmtcPush = Date.now()
+    pushSmtc()
+    if (player.duration > 0 && 'mediaSession' in navigator && navigator.mediaSession.setPositionState) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: player.duration,
+          position: Math.min(audio.currentTime, player.duration),
+          playbackRate: audio.playbackRate || 1,
+        })
+      } catch { /* 部分内核不支持 */ }
+    }
+  }
   if (!player.scrubbing && Date.now() - lastPositionSave > 5000) {
     lastPositionSave = Date.now()
     savePositionNow()
@@ -359,6 +406,16 @@ function updateMediaSession() {
   navigator.mediaSession.setActionHandler('pause', () => audio.pause())
   navigator.mediaSession.setActionHandler('previoustrack', prev)
   navigator.mediaSession.setActionHandler('nexttrack', next)
+
+  // 封面交给主进程去取（渲染层 CSP 不允许跨站拉图）
+  const key = item.workId + '::' + item.title
+  if (key !== lastSmtcCoverKey) {
+    lastSmtcCoverKey = key
+    const cover = item.coverUrl
+    if (cover) {
+      ;(window as unknown as { kikoeru?: LyricsBridge }).kikoeru?.smtcCoverUrl?.(cover)
+    }
+  }
 }
 
 // ---------------------------------------------------------------- 播放列表

@@ -25,8 +25,10 @@ contextBridge.exposeInMainWorld('kikoeru', {
   // ---- 本地已下载文件 ----
   resolveLocal: (opts) => ipcRenderer.invoke('local:resolve', opts),
 
-  // ---- 播放状态（任务栏缩略图按钮） ----
+  // ---- 播放状态（任务栏缩略图按钮 / Windows 媒体面板） ----
   setPlayerState: (state) => ipcRenderer.send('player:state', state),
+  smtcState: (state) => ipcRenderer.send('smtc:state', state),
+  smtcCoverUrl: (url) => ipcRenderer.send('smtc:cover-url', url),
 
   // ---- 窗口控制（无边框窗口） ----
   windowAction: (action) => ipcRenderer.invoke('window:action', action),

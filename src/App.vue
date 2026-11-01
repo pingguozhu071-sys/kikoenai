@@ -16,7 +16,7 @@ import SleepTimerDialog from './components/SleepTimerDialog.vue'
 import { initDownloads } from './stores/downloads'
 import { useSession } from './stores/session'
 import { applyTheme } from './theme/material'
-import { player, current, toggle, next, prev, seekBy, setVolume, toggleMute, playAt } from './stores/player'
+import { player, current, toggle, next, prev, seek, seekBy, setVolume, toggleMute, playAt } from './stores/player'
 import { ui } from './stores/ui'
 
 const route = useRoute()
@@ -96,7 +96,7 @@ onMounted(() => {
   const desktop = (window as unknown as {
     kikoeru?: {
       onMediaKey?: (cb: (a: string) => void) => () => void
-      onPlayerCommand?: (cb: (cmd: string | { type: string; index?: number; delta?: number }) => void) => () => void
+      onPlayerCommand?: (cb: (cmd: string | { type: string; index?: number; delta?: number; positionMs?: number }) => void) => () => void
     }
   }).kikoeru
   if (desktop?.onMediaKey) {
@@ -115,7 +115,9 @@ onMounted(() => {
       else if (cmd === 'next') next()
       else if (cmd && typeof cmd === 'object') {
         if (cmd.type === 'seek') seekBy(Number(cmd.delta) || 0)
-        else if (cmd.type === 'play-index' && typeof cmd.index === 'number') playAt(cmd.index)
+        else if (cmd.type === 'seek-to' && typeof cmd.positionMs === 'number') {
+          seek(cmd.positionMs / 1000)
+        } else if (cmd.type === 'play-index' && typeof cmd.index === 'number') playAt(cmd.index)
       }
     })
   }
