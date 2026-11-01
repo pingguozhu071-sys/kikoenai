@@ -263,16 +263,21 @@ export function resolveMediaUrl(url: string | undefined): string | null {
 
 export type ProgressValue = 'marked' | 'listening' | 'listened' | 'replay' | 'postponed'
 
-export async function putReview(workId: number, progress: ProgressValue): Promise<void> {
+/**
+ * 写收听进度。progress 传 null 就是清除（服务端支持）。
+ * 返回是否成功——界面必须按返回值更新，不能先改 UI 再假设成功。
+ */
+export async function putReview(workId: number, progress: ProgressValue | null): Promise<boolean> {
   const name = useSession.userName
   try {
-    await fetch('/kapi/review?starOnly=false&progressOnly=true', {
+    const res = await fetch('/kapi/review?starOnly=false&progressOnly=true', {
       method: 'PUT',
       headers: headers(),
       body: JSON.stringify({ user_name: name, work_id: workId, progress }),
     })
+    return res.ok
   } catch {
-    /* 进度上报失败不影响播放 */
+    return false
   }
 }
 
@@ -311,12 +316,26 @@ export function createPlaylist(name: string, privacy = 'private', works: number[
   }, { authRequired: true })
 }
 
+/** 服务端字段名是 id，不是 playlistId（传 playlistId 会 400） */
 export function addWorksToPlaylist(playlistId: number | string, works: number[]): Promise<unknown> {
-  return post('/playlist/add-works-to-playlist', { playlistId, works }, { authRequired: true })
+  return post('/playlist/add-works-to-playlist', { id: playlistId, works }, { authRequired: true })
 }
 
 export function removeWorksFromPlaylist(playlistId: number | string, works: number[]): Promise<unknown> {
-  return post('/playlist/remove-works-from-playlist', { playlistId, works }, { authRequired: true })
+  return post('/playlist/remove-works-from-playlist', { id: playlistId, works }, { authRequired: true })
+}
+
+/** 播放列表里的作品；元数据接口只给 works_count，作品要单独取 */
+export function getPlaylistWorks(
+  playlistId: number | string,
+  page = 1,
+  pageSize = 60,
+): Promise<WorksResponse> {
+  return request<WorksResponse>(
+    `/playlist/get-playlist-works${qs({ id: playlistId, page: Math.max(1, page), pageSize })}`,
+    {},
+    { authRequired: true },
+  )
 }
 
 /** 我的全部播放列表（不同服务端返回可能是数组或 { playlists }） */

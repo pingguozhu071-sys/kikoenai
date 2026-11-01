@@ -168,7 +168,9 @@ function nextDisplay() { void bridge?.lyricsNextDisplay?.() }
 
 /* 实时背景：由 canvas 每 90ms 从屏幕流取一次 */
 .glass {
+  /* canvas 是替换元素：只写 inset 不会拉伸，必须显式给宽高 */
   position: absolute; inset: -28px; z-index: 0;
+  width: calc(100% + 56px); height: calc(100% + 56px);
   pointer-events: none;
   filter: blur(16px) saturate(1.35);
 }

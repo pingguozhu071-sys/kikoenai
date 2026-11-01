@@ -17,6 +17,7 @@ import { useSession } from '../stores/session'
 import { ui } from '../stores/ui'
 import { toast } from '../stores/toast'
 import { downloadWork, downloadTrack } from '../stores/downloads'
+import { ensureFavorites, isFavorite, toggleFavorite } from '../stores/favorites'
 import { fmtBytes, fmtCount, fmtDuration } from '../utils/format'
 import { decodeText } from '../services/lyrics'
 
@@ -34,6 +35,8 @@ const similarSub = ref('听过这部的人也听了')
 const loading = ref(true)
 const error = ref('')
 const marked = ref<ProgressValue | null>(null)
+const favorite = computed(() => isFavorite(workId.value))
+const favoriteBusy = ref(false)
 const playlistOpen = ref(false)
 const voteOpen = ref(false)
 const markBusy = ref(false)
@@ -109,7 +112,11 @@ async function load() {
     const [w, t] = await Promise.all([getWork(workId.value), getTracks(workId.value)])
     if (seq !== loadSeq) return
     work.value = w
+    // 作品接口会带当前账号的收听进度
+    const p = (w as Work & { progress?: ProgressValue | null }).progress
+    marked.value = p ?? null
     tracks.value = Array.isArray(t) ? t : []
+    if (session.loggedIn) void ensureFavorites()
   } catch (e) {
     if (seq !== loadSeq) return
     error.value = e instanceof Error ? e.message : String(e)
@@ -240,21 +247,37 @@ async function openCover() {
   ui.openViewer({ kind: 'image', url, title: title.value })
 }
 
+/** 收听进度：只设置，不做反向取消 */
 async function mark(p: ProgressValue) {
   if (!session.loggedIn) { ui.openLogin('收藏与进度需要登录'); return }
+  if (markBusy.value) return
   markBusy.value = true
   try {
-    await putReview(workId.value, p)
+    const ok = await putReview(workId.value, p)
+    if (!ok) { toast('标记失败，请检查网络', 'error'); return }
     marked.value = p
     const label: Record<ProgressValue, string> = {
-      marked: '已加入收藏', listening: '标为在听', listened: '标为听过',
+      marked: '已标为想听', listening: '标为在听', listened: '标为听过',
       replay: '标为重听', postponed: '标为搁置',
     }
     toast(label[p], 'success')
-  } catch {
-    toast('标记失败，请检查网络', 'error')
   } finally {
     markBusy.value = false
+  }
+}
+
+/** 收藏 = 默认收藏夹（站点上的「收藏」就是这个），可以再加一次取消 */
+async function toggleFav() {
+  if (!session.loggedIn) { ui.openLogin('收藏需要登录'); return }
+  if (favoriteBusy.value) return
+  favoriteBusy.value = true
+  try {
+    const now = await toggleFavorite(workId.value)
+    toast(now ? '已加入收藏夹' : '已移出收藏夹', 'success')
+  } catch (e) {
+    toast(`收藏失败：${e instanceof Error ? e.message : String(e)}`, 'error')
+  } finally {
+    favoriteBusy.value = false
   }
 }
 
@@ -350,8 +373,11 @@ onMounted(load)
               <button class="chip" :disabled="!downloadableCount" @click="downloadWork(workId, title)">
                 <UiIcon name="download" :size="15" /> 下载全部
               </button>
-              <button class="chip" :class="{ plain: marked !== 'marked' }" :disabled="markBusy" @click="mark('marked')">
-                {{ marked === 'marked' ? '已收藏' : '收藏' }}
+              <button
+                class="chip" :class="{ plain: !favorite }" :disabled="favoriteBusy"
+                @click="toggleFav"
+              >
+                {{ favorite ? '已收藏 · 点此取消' : '收藏' }}
               </button>
               <button class="chip" @click="playlistOpen = true">加入播放列表</button>
               <button class="chip" @click="voteOpen = true">标签纠错</button>

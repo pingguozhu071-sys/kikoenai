@@ -6,7 +6,7 @@
  */
 import { reactive } from 'vue'
 import {
-  addWorksToPlaylist, getDefaultMarkPlaylist, getPlaylistMetadata, removeWorksFromPlaylist,
+  addWorksToPlaylist, getDefaultMarkPlaylist, getPlaylistWorks, removeWorksFromPlaylist,
 } from '../api/client'
 import { useSession } from './session'
 
@@ -53,9 +53,17 @@ export async function ensureFavorites(force = false): Promise<void> {
     try {
       const meta = await getDefaultMarkPlaylist()
       favorites.playlistId = meta.id
-      const full = await getPlaylistMetadata(meta.id)
+      // 元数据只给 works_count；作品列表要按页取
       const ids = new Set<number>()
-      for (const w of full.works || []) ids.add(w.id)
+      let page = 1
+      for (;;) {
+        const full = await getPlaylistWorks(meta.id, page, 60)
+        for (const w of full.works || []) ids.add(w.id)
+        const total = full.pagination?.totalCount ?? 0
+        if (page * 60 >= total || !full.works?.length) break
+        page++
+        if (page > 50) break
+      }
       favorites.ids = ids
     } catch {
       // 拿不到就维持"未知"，不打断播放；下次切歌/登录再试

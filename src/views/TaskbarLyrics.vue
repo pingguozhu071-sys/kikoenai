@@ -157,6 +157,7 @@ onUnmounted(() => {
 
 .glass {
   position: absolute; inset: -28px; z-index: 0;
+  width: calc(100% + 56px); height: calc(100% + 56px);
   pointer-events: none;
   filter: blur(16px) saturate(1.35);
 }

@@ -11,7 +11,7 @@ import UiIcon from '../components/UiIcon.vue'
 import WorkCard from '../components/WorkCard.vue'
 import SkeletonGrid from '../components/SkeletonGrid.vue'
 import {
-  getDefaultMarkPlaylist, getPlaylistMetadata, getReview,
+  getDefaultMarkPlaylist, getPlaylistWorks, getReview,
 } from '../api/client'
 import type { Work } from '../api/types'
 import { useSession } from '../stores/session'
@@ -41,15 +41,25 @@ const playlistName = ref('')
 const needLogin = computed(() => !session.loggedIn)
 
 async function loadPlaylist() {
-  // 先取默认收藏夹，再取其内容；任一失败都回退到进度接口
+  // 元数据接口只返回 works_count，作品要单独取（分页拉全量）
   const meta = await getDefaultMarkPlaylist()
-  playlistName.value = (meta?.name as string) || '收藏夹'
+  const rawName = (meta?.name as string) || ''
+  // 服务端默认夹叫 __SYS_PLAYLIST_MARKED，界面上不该露出来
+  playlistName.value = !rawName || rawName.startsWith('__SYS') ? '收藏夹' : rawName
   const id = meta?.id
   if (id === undefined || id === null) throw new Error('没有默认收藏夹')
-  const detail = await getPlaylistMetadata(id)
-  const list = (detail?.works ?? []) as Work[]
-  works.value = list
-  total.value = list.length
+
+  const all: Work[] = []
+  let page = 1
+  for (;;) {
+    const res = await getPlaylistWorks(id, page, 60)
+    all.push(...(res.works ?? []))
+    const totalCount = res.pagination?.totalCount ?? all.length
+    if (!res.works?.length || all.length >= totalCount || page > 50) break
+    page++
+  }
+  works.value = all
+  total.value = all.length
 }
 
 async function loadReview(filter: string) {

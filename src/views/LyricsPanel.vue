@@ -119,6 +119,7 @@ onUnmounted(() => {
 }
 .lp-glass {
   position: absolute; inset: -24px; z-index: 0;
+  width: calc(100% + 48px); height: calc(100% + 48px);
   opacity: 0.85;
   pointer-events: none;
   filter: blur(14px) saturate(1.3);
