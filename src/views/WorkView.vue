@@ -247,20 +247,24 @@ async function openCover() {
   ui.openViewer({ kind: 'image', url, title: title.value })
 }
 
-/** 收听进度：只设置，不做反向取消 */
+/**
+ * 收听进度：点另一个标签直接换；再点当前这个标签就是取消（服务端接受 progress:null）。
+ * 标记之间互斥，同一作品只会有一个进度。
+ */
 async function mark(p: ProgressValue) {
   if (!session.loggedIn) { ui.openLogin('收藏与进度需要登录'); return }
   if (markBusy.value) return
+  const next: ProgressValue | null = marked.value === p ? null : p
   markBusy.value = true
   try {
-    const ok = await putReview(workId.value, p)
+    const ok = await putReview(workId.value, next)
     if (!ok) { toast('标记失败，请检查网络', 'error'); return }
-    marked.value = p
+    marked.value = next
     const label: Record<ProgressValue, string> = {
       marked: '已标为想听', listening: '标为在听', listened: '标为听过',
       replay: '标为重听', postponed: '标为搁置',
     }
-    toast(label[p], 'success')
+    toast(next ? label[next] : '已取消标记', 'success')
   } finally {
     markBusy.value = false
   }
