@@ -17,6 +17,22 @@ export function decodeText(buffer: ArrayBuffer, contentType = ''): string {
   const m = contentType.match(/charset=([\w-]+)/i)
   const declared = m ? m[1].toLowerCase() : ''
 
+  // 先看 BOM：不少字幕文件是 UTF-16，按 UTF-8 解会夹杂 NUL，时间轴全部匹配失败
+  const bytes = new Uint8Array(buffer)
+  if (bytes.length >= 2) {
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(buffer)
+    if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(buffer)
+  }
+  // 无 BOM 的 UTF-16：ASCII 区域会有大量 0x00
+  const sample = Math.min(bytes.length, 512)
+  if (sample > 32) {
+    let zeros = 0
+    for (let i = 0; i < sample; i++) if (bytes[i] === 0) zeros++
+    if (zeros / sample > 0.3) {
+      try { return new TextDecoder('utf-16le', { fatal: true }).decode(buffer) } catch { /* 不是 UTF-16 */ }
+    }
+  }
+
   if (declared && declared !== 'utf-8' && declared !== 'utf8') {
     try { return new TextDecoder(declared).decode(buffer) } catch { /* 继续尝试 */ }
   }
@@ -199,6 +215,53 @@ export function matchSubtitle(audioTitle: string, subs: TrackNode[]): MatchResul
     if (no && trackNo(sBase) === no) consider(s, 60)
   }
   return best
+}
+
+/**
+ * 按匹配度排序（同分时带时间轴的优先，避免台本 .txt 抢在 .lrc 前面）。
+ * 调用方可以按顺序逐个尝试，直到某个文件能解析出内容。
+ */
+export function rankSubtitles(audioTitle: string, subs: TrackNode[]): TrackNode[] {
+  const base = baseName(audioTitle)
+  const normBase = normalize(stripChannel(base))
+  const no = trackNo(base)
+
+  const scored: { node: TrackNode; score: number; order: number }[] = []
+  subs.forEach((s, order) => {
+    if (isReadmeLike(s.title)) return
+    const sBase = baseName(s.title)
+    let score = 0
+    if (sBase === base) score = 100
+    else if (normBase && normalize(stripChannel(sBase)) === normBase) score = 80
+    else if (no && trackNo(sBase) === no) score = 60
+    if (!score) return
+    if (isTimedFormat(s.title)) score += 5
+    scored.push({ node: s, score, order })
+  })
+  scored.sort((a, b) => (b.score - a.score) || (a.order - b.order))
+  return scored.map((x) => x.node)
+}
+
+/** 跨文件夹候选：先同名，再归一化同名；同样把带时间轴的排在前面 */
+export function rankSubtitlesGlobal(audioTitle: string, subs: TrackNode[]): TrackNode[] {
+  const base = baseName(audioTitle)
+  const norm = normalize(stripChannel(base))
+
+  const sorted = (list: TrackNode[]) => {
+    const timed = list.filter((n) => isTimedFormat(n.title))
+    const plain = list.filter((n) => !isTimedFormat(n.title))
+    return [...timed, ...plain]
+  }
+
+  const exact = subs.filter((s) => baseName(s.title) === base && !isReadmeLike(s.title))
+  if (exact.length) return sorted(exact)
+
+  const sameNorm = subs.filter((s) => {
+    if (isReadmeLike(s.title)) return false
+    const n = normalize(stripChannel(baseName(s.title)))
+    return !!n && n === norm
+  })
+  return sorted(sameNorm)
 }
 
 /** 同一层（同一个文件夹）里的字幕；不做递归，避免串到别的文件夹 */

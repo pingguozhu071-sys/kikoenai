@@ -19,6 +19,11 @@ test('candidateDirs：先 RJ{workId}，再根目录', () => {
   assert.deepEqual(candidateDirs(['C:\\DL'], 0), ['C:\\DL'])
 })
 
+test('candidateDirs：includeRoot=false 时只找 RJ 目录（默认分类模式）', () => {
+  assert.deepEqual(candidateDirs(['C:\\DL'], 123, false), [path.join('C:\\DL', 'RJ123')])
+  assert.deepEqual(candidateDirs(['C:\\DL'], 0, false), [])
+})
+
 test('findInDir：精确命中与非法字符清洗', () => {
   const dir = tmpDir()
   fs.writeFileSync(path.join(dir, '01_a.mp3'), 'x')

@@ -10,14 +10,16 @@ function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** 候选目录：优先 RJ{workId}，其次各根目录（用户可能关了自动分类） */
-function candidateDirs(roots, workId) {
+/** 候选目录：优先 RJ{workId}；只有关闭自动分类时才会再去根目录找 */
+function candidateDirs(roots, workId, includeRoot = true) {
   const out = []
   const bases = (roots || []).filter(Boolean)
   if (Number.isInteger(workId) && workId > 0) {
     for (const r of bases) out.push(path.join(r, `RJ${workId}`))
   }
-  for (const r of bases) out.push(r)
+  if (includeRoot) {
+    for (const r of bases) out.push(r)
+  }
   return out
 }
 
@@ -48,17 +50,17 @@ function findInDir(dir, fileName) {
 }
 
 /**
- * @param {{ roots: string[], workId?: number, fileName: string, knownPath?: string }} opts
+ * @param {{ roots: string[], workId?: number, fileName: string, knownPath?: string, includeRoot?: boolean }} opts
  * @returns {string|null} 命中的绝对路径
  */
-function resolveLocalFile({ roots, workId, fileName, knownPath }) {
+function resolveLocalFile({ roots, workId, fileName, knownPath, includeRoot = true }) {
   if (knownPath) {
     try {
       if (fs.statSync(knownPath).isFile()) return knownPath
     } catch { /* 记录里的文件已被删 */ }
   }
   if (!fileName) return null
-  for (const dir of candidateDirs(roots, workId)) {
+  for (const dir of candidateDirs(roots, workId, includeRoot)) {
     const hit = findInDir(dir, fileName)
     if (hit) return hit
   }

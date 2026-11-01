@@ -2381,18 +2381,22 @@ if (!gotLock) {
       const workId = Number(opts?.workId)
       const fileName = String(opts?.fileName || '')
       if (!fileName) return null
-      // 已完成的下载记录里有精确路径，优先用它（同名多次下载也不会错）
-      const known = downloadRecords.find((t) =>
-        t.state === 'done'
-        && t.workId === workId
-        && t.fileName === sanitizeFileName(fileName)
-        && typeof t.targetPath === 'string')
+      // 还没下完的任务不要拿半截文件去播（会表现成"解析不了"）
+      const rec = downloadRecords.find((t) =>
+        t.workId === workId
+        && t.fileName === sanitizeFileName(fileName))
+      if (rec && rec.state !== 'done') return null
+
+      const known = rec && rec.state === 'done' && typeof rec.targetPath === 'string' ? rec.targetPath : undefined
+      const settings = downloadSettings()
       try {
         const hit = resolveLocalFile({
           roots: localRoots(),
           workId,
           fileName,
-          knownPath: known ? known.targetPath : undefined,
+          knownPath: known,
+          // 默认按 RJ 号分类；只有用户关掉分类时才去根目录扫，避免同名曲目串到别的作品
+          includeRoot: settings.autoClassify === false,
         })
         if (!hit) return null
         // 命中路径也必须在下载根之内（用户改过目录后旧记录可能已经越界）

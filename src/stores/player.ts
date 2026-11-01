@@ -16,8 +16,8 @@ import { toast } from './toast'
 import { extOf } from '../utils/format'
 import { sniffAudioCodec, UNSUPPORTED_AUDIO } from '../utils/mp4'
 import {
-  collectSubtitles, collectSubtitlesShallow, decodeText, matchSubtitle, matchSubtitleGlobal,
-  parseSubtitle, subtitleFormat,
+  collectSubtitles, collectSubtitlesShallow, decodeText, parseSubtitle,
+  rankSubtitles, rankSubtitlesGlobal, subtitleFormat,
 } from '../services/lyrics'
 
 export interface PlaylistItem {
@@ -264,6 +264,8 @@ audio.addEventListener('error', () => {
   const code = audio.error && audio.error.code
   if (code === 1) return // 换源引起的中断，不算失败
 
+  console.warn('[player] media error', code, player.usingLocal ? 'local' : 'remote', current()?.title)
+
   // 本地文件坏了/被删了：自动切回在线地址，保留当前位置
   const item = current()
   if (player.usingLocal && !localFallbackUsed && item) {
@@ -307,7 +309,7 @@ function scheduleAudioProbe() {
 
     probedUrl = item.streamUrl
     let codec = ''
-    try { codec = (await sniffAudioCodec(item.streamUrl)) ?? '' } catch { /* 嗅探失败不影响播放 */ }
+    try { codec = (await sniffAudioCodec(api.textFetchUrl(item.streamUrl))) ?? '' } catch { /* 嗅探失败不影响播放 */ }
     player.audioWarning = codec && UNSUPPORTED_AUDIO.has(codec.toLowerCase())
       ? `音轨是 ${codec.toUpperCase()}（Dolby/DTS），浏览器内核解不了，所以只有画面没有声音`
       : '这条视频的音轨编码浏览器内核解不了（常见于 AC-3/DTS），所以只有画面没有声音'
@@ -322,7 +324,10 @@ function updateMediaSession() {
     title: item.title,
     artist: item.workTitle,
     album: 'Kikoeru',
-    artwork: item.coverUrl ? [{ src: item.coverUrl, sizes: '256x256' }] : [],
+    // Media Session 只接受 http/https/data/blob；app:// 会触发控制台警告，直接省略
+    artwork: /^(https?:|data:|blob:)/i.test(item.coverUrl)
+      ? [{ src: item.coverUrl, sizes: '256x256' }]
+      : [],
   })
   navigator.mediaSession.setActionHandler('play', () => { void audio.play() })
   navigator.mediaSession.setActionHandler('pause', () => audio.pause())
@@ -538,27 +543,39 @@ export async function bindSubtitleManually(workId: number, audioTitle: string, s
   writeBind(bindKey(workId, audioTitle), subtitle.title)
   const item = current()
   if (!item || item.workId !== workId) return
-  await applySubtitle(subtitle)
+  if (!await applySubtitle(subtitle)) {
+    toast('这个字幕文件解析不出内容', 'error')
+  }
 }
 
-async function applySubtitle(sub: TrackNode) {
-  const seq = ++lrcSeq.v
+async function applySubtitle(sub: TrackNode, ownerSeq?: number): Promise<boolean> {
+  const seq = ownerSeq ?? ++lrcSeq.v
   const url = api.resolveMediaUrl(sub.mediaStreamUrl)
-  if (!url) return
+  if (!url) return false
   try {
     const res = await fetch(api.textFetchUrl(url))
-    if (!res.ok) return
+    if (!res.ok) {
+      console.warn('[subtitle] http', res.status, sub.title)
+      return false
+    }
     const buf = await res.arrayBuffer()
     const text = decodeText(buf, res.headers.get('content-type') || '')
-    if (seq !== lrcSeq.v) return // 期间又切歌了
+    if (seq !== lrcSeq.v) return false
     const fmt = subtitleFormat(sub.title)
-    player.lrc = parseSubtitle(text, '.' + fmt)
+    const lines = parseSubtitle(text, '.' + fmt)
+    if (!lines.length) {
+      console.warn('[subtitle] empty', sub.title, fmt, text.length)
+      return false
+    }
+    player.lrc = lines
     player.lrcTitle = sub.title
     player.lrcFormat = fmt
     lastPushedIdx = -2
     notifyLyrics(true)
-  } catch {
-    /* 字幕加载失败不影响播放 */
+    return true
+  } catch (e) {
+    console.warn('[subtitle] fail', sub.title, e instanceof Error ? e.message : String(e))
+    return false
   }
 }
 
@@ -578,22 +595,35 @@ async function autoBindLyrics(item: PlaylistItem) {
   }
   if (seq !== lrcSeq.v) return
 
+  const all = collectSubtitles(tree)
+  const tried = new Set<string>()
+
+  /** 按顺序尝试候选，直到某个文件真的能解析出内容 */
+  const attempt = async (nodes: TrackNode[]): Promise<boolean> => {
+    for (const node of nodes) {
+      if (seq !== lrcSeq.v) return false
+      if (tried.has(node.title)) continue
+      tried.add(node.title)
+      if (await applySubtitle(node, seq)) return true
+      if (seq !== lrcSeq.v) return false
+    }
+    return false
+  }
+
   const manualName = readBinds()[bindKey(item.workId, item.title)]
   if (manualName) {
-    const manual = collectSubtitles(tree).find((s) => s.title === manualName)
-    if (manual) { await applySubtitle(manual); return }
+    const manual = all.find((s) => s.title === manualName)
+    if (manual && await applySubtitle(manual, seq)) return
   }
 
-  // 1) 只看同一个文件夹（特典里的音轨不会去拿正片字幕）
+  // 1) 同一个文件夹：同名 / 去声道同名 / 同轨号，带时间轴的优先
   const level = findTrackLevel(tree, item.title)
-  if (level) {
-    const best = matchSubtitle(item.title, collectSubtitlesShallow(level))
-    if (best) { await applySubtitle(best.node); return }
-  }
+  if (level && await attempt(rankSubtitles(item.title, collectSubtitlesShallow(level)))) return
 
-  // 2) 全局兜底：只认唯一同名，不做任何位置猜测
-  const globalBest = matchSubtitleGlobal(item.title, collectSubtitles(tree))
-  if (globalBest) await applySubtitle(globalBest.node)
+  // 2) 跨文件夹兜底：只认同名（含归一化同名），不按位置猜
+  if (await attempt(rankSubtitlesGlobal(item.title, all))) return
+
+  // 全部失败：留空，界面显示"会自动匹配"，不要绑一个空时间轴
 }
 
 /** 当前应高亮的歌词行下标（-1 表示还没到第一句） */
