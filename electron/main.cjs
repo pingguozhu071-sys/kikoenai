@@ -134,6 +134,8 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow = null
 let lyricWin = null
+/** 任务栏字幕窗：屏幕左下角一行歌词，鼠标穿透 */
+let taskbarWin = null
 let lastLyricsPayload = null
 let lyricDisplayId = null
 let broadcastWindowState = null
@@ -1184,6 +1186,64 @@ function createLyricWindow() {
   lyricWin.on('closed', () => { lyricWin = null })
   patchConfig({ lyricDisplayId })
   return lyricWin
+}
+
+/** 任务栏字幕：屏幕左下角一行歌词，鼠标穿透，不挡桌面操作 */
+function createTaskbarLyricsWindow() {
+  if (taskbarWin && !taskbarWin.isDestroyed()) {
+    taskbarWin.show()
+    return taskbarWin
+  }
+  const disp = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()) || screen.getPrimaryDisplay()
+  const height = 44
+  const width = Math.min(560, Math.round(disp.workArea.width * 0.4))
+  const x = Math.round(disp.workArea.x + 16)
+  const y = Math.round(disp.workArea.y + disp.workArea.height - height - 6)
+
+  taskbarWin = new BrowserWindow({
+    width, height, x, y,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    focusable: false,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  })
+  taskbarWin.setAlwaysOnTop(true, 'screen-saver')
+  taskbarWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // 不接收鼠标事件：点在歌词上直接穿透到桌面/任务栏
+  taskbarWin.setIgnoreMouseEvents(true)
+
+  const url = isDev
+    ? DEV_URL + '#/taskbar-lyrics'
+    : 'app://kikoeru/index.html#/taskbar-lyrics'
+  taskbarWin.loadURL(url)
+
+  taskbarWin.webContents.once('did-finish-load', () => {
+    if (lastLyricsPayload && taskbarWin && !taskbarWin.isDestroyed()) {
+      taskbarWin.webContents.send('lyrics:data', lastLyricsPayload)
+    }
+  })
+  taskbarWin.on('closed', () => { taskbarWin = null })
+  return taskbarWin
+}
+
+function toggleTaskbarLyricsWindow() {
+  if (taskbarWin && !taskbarWin.isDestroyed() && taskbarWin.isVisible()) {
+    taskbarWin.hide()
+    return false
+  }
+  createTaskbarLyricsWindow()
+  return true
 }
 
 function createWindow() {
@@ -2240,6 +2300,17 @@ if (!gotLock) {
     ipcMain.on('lyrics:update', (_e, payload) => {
       lastLyricsPayload = payload
       if (lyricWin && !lyricWin.isDestroyed()) lyricWin.webContents.send('lyrics:data', payload)
+      if (taskbarWin && !taskbarWin.isDestroyed()) taskbarWin.webContents.send('lyrics:data', payload)
+    })
+
+    ipcMain.handle('lyrics:taskbar-toggle', () => ({ visible: toggleTaskbarLyricsWindow() }))
+
+    // Windows 11 原生亚克力：桌面字幕的"磨砂/液态"用真实背景模糊
+    ipcMain.on('lyrics:material', (_e, material) => {
+      if (!lyricWin || lyricWin.isDestroyed()) return
+      try {
+        lyricWin.setBackgroundMaterial(material === 'acrylic' ? 'acrylic' : 'none')
+      } catch { /* 旧系统不支持，退回普通半透明 */ }
     })
 
     ipcMain.handle('lyrics:request', () => lastLyricsPayload)

@@ -2,13 +2,13 @@
 /**
  * 底部播放条 —— 只放常用操作，其余收进最右侧「⋮」菜单（酷狗/网易云的做法）。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import UiIcon from './UiIcon.vue'
 import SeekBar from './SeekBar.vue'
 import {
   player, current, toggle, next, prev, setVolume, toggleMute, setRate, playAt,
-  cycleRepeat, toggleShuffle, seekBy, setSleepMinutes, sleepAfterTrack, clearSleep, retryCurrent,
+  cycleRepeat, toggleShuffle, seekBy, retryCurrent,
 } from '../stores/player'
 import { downloadState, downloadSingleItem, isDesktop as downloadsAvailable } from '../stores/downloads'
 import { ensureFavorites, isFavorite, toggleFavorite } from '../stores/favorites'
@@ -71,15 +71,26 @@ const RATES = [0.75, 1, 1.25, 1.5, 2]
 const sleepLabel = computed(() => {
   if (player.sleepAfterTrack) return '播完当前曲停止'
   if (player.sleepAt) {
-    const left = Math.max(0, Math.round((player.sleepAt - Date.now()) / 60000))
-    return `睡眠定时：约 ${left} 分钟`
+    const left = Math.max(0, player.sleepAt - nowTick.value)
+    const m = Math.floor(left / 60000)
+    const s = Math.floor((left % 60000) / 1000)
+    return `睡眠定时 · ${m}:${String(s).padStart(2, '0')}`
   }
   return '睡眠定时'
 })
-function cycleSleep() {
-  if (player.sleepAt || player.sleepAfterTrack) { clearSleep(); toast('已关闭睡眠定时', 'info'); return }
-  setSleepMinutes(30)
-  toast('30 分钟后自动停止', 'info')
+
+/** 让剩余时间每秒刷新一次；依赖 nowTick 触发重算 */
+const nowTick = ref(Date.now())
+let tickTimer = 0
+onMounted(() => {
+  tickTimer = window.setInterval(() => { nowTick.value = Date.now() }, 1000)
+})
+onUnmounted(() => window.clearInterval(tickTimer))
+
+/** 任务栏字幕（底部一行歌词） */
+function toggleTaskbarLyrics() {
+  const bridge = (window as unknown as { kikoeru?: { taskbarLyricsToggle?: () => Promise<unknown> } }).kikoeru
+  if (bridge?.taskbarLyricsToggle) void bridge.taskbarLyricsToggle()
 }
 
 const dlBusy = ref(false)
@@ -184,7 +195,10 @@ function desktopLyrics() {
             <button class="menu-item" @click="desktopLyrics(); moreOpen = false">
               <UiIcon name="lyrics" :size="16" /><span>桌面字幕</span>
             </button>
-            <button class="menu-item" @click="cycleSleep(); moreOpen = false">
+            <button class="menu-item" @click="toggleTaskbarLyrics(); moreOpen = false">
+              <UiIcon name="lyrics" :size="16" /><span>任务栏字幕</span>
+            </button>
+            <button class="menu-item" @click="ui.openSleep(); moreOpen = false">
               <UiIcon name="schedule" :size="16" /><span>{{ sleepLabel }}</span>
             </button>
             <button class="menu-item" @click="setRate(RATES[(RATES.indexOf(player.rate) + 1) % RATES.length]); moreOpen = false">

@@ -24,6 +24,7 @@ import RecommendView from './views/RecommendView.vue'
 import PlaylistsView from './views/PlaylistsView.vue'
 import DownloadsView from './views/DownloadsView.vue'
 import DesktopLyrics from './views/DesktopLyrics.vue'
+import TaskbarLyrics from './views/TaskbarLyrics.vue'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -42,6 +43,7 @@ const router = createRouter({
     { path: '/review', redirect: '/library' },
     { path: '/settings', component: SettingsView },
     { path: '/desktop-lyrics', component: DesktopLyrics },
+    { path: '/taskbar-lyrics', component: TaskbarLyrics },
     { path: '/login', redirect: '/' },
   ],
 })

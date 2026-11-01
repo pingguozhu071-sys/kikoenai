@@ -66,6 +66,15 @@ export const ui = reactive({
     this.loginOpen = false
   },
 
+  /** 睡眠定时弹窗 */
+  sleepOpen: false,
+  openSleep() {
+    this.sleepOpen = true
+  },
+  closeSleep() {
+    this.sleepOpen = false
+  },
+
   openNowPlaying() {
     this.nowPlaying = true
   },

@@ -12,6 +12,7 @@ import WindowControls from './components/WindowControls.vue'
 import NowPlaying from './components/NowPlaying.vue'
 import MediaViewer from './components/MediaViewer.vue'
 import VideoViewer from './components/VideoViewer.vue'
+import SleepTimerDialog from './components/SleepTimerDialog.vue'
 import { initDownloads } from './stores/downloads'
 import { useSession } from './stores/session'
 import { applyTheme } from './theme/material'
@@ -57,7 +58,7 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-const isLyricsWindow = computed(() => route.path === '/desktop-lyrics')
+const isLyricsWindow = computed(() => route.path === '/desktop-lyrics' || route.path === '/taskbar-lyrics')
 
 /** 点空白处让输入框失焦：否则搜索框的焦点环会一直亮着 */
 const FOCUSABLE_TAGS = /^(INPUT|TEXTAREA|SELECT)$/
@@ -124,6 +125,7 @@ onUnmounted(() => {
     <NowPlaying />
   <MediaViewer />
   <VideoViewer />
+  <SleepTimerDialog />
   </template>
   <LoginDialog />
   <ToastHost />
