@@ -23,8 +23,8 @@ interface DesktopBridge {
 
 const bridge = (window as unknown as { kikoeru?: DesktopBridge }).kikoeru
 
-const currentLine = ref('桌面歌词已就绪')
-const nextLine = ref('在播放器中点击"歌词"按钮即可同步')
+const currentLine = ref('桌面字幕已就绪')
+const nextLine = ref('在播放器中点击"字幕"按钮即可同步')
 const songTitle = ref('')
 const playing = ref(false)
 const hovered = ref(false)
@@ -73,7 +73,7 @@ function nextDisplay() { void bridge?.lyricsNextDisplay?.() }
     <div class="dlw-tools" :class="{ show: hovered }">
       <button class="dlw-btn" title="移到下一块屏幕" @click="nextDisplay"><UiIcon name="swap_horiz" :size="15" /></button>
       <button class="dlw-btn" title="回到播放器" @click="backToApp"><UiIcon name="expand_less" :size="15" /></button>
-      <button class="dlw-btn" title="关闭桌面歌词" @click="close"><UiIcon name="close" :size="15" /></button>
+      <button class="dlw-btn" title="关闭桌面字幕" @click="close"><UiIcon name="close" :size="15" /></button>
     </div>
 
     <div v-if="songTitle" class="dlw-song">{{ songTitle }}</div>

@@ -100,7 +100,7 @@ function openNowPlaying() { ui.openNowPlaying() }
 function desktopLyrics() {
   const bridge = (window as unknown as { kikoeru?: { lyricsToggle?: () => Promise<unknown> } }).kikoeru
   if (bridge?.lyricsToggle) void bridge.lyricsToggle()
-  else toast('桌面歌词需要桌面版', 'info')
+  else toast('桌面字幕需要桌面版', 'info')
 }
 </script>
 
@@ -182,7 +182,7 @@ function desktopLyrics() {
         <Transition name="menu">
           <div v-if="moreOpen" class="menu pb-more" @click.stop>
             <button class="menu-item" @click="desktopLyrics(); moreOpen = false">
-              <UiIcon name="lyrics" :size="16" /><span>桌面歌词</span>
+              <UiIcon name="lyrics" :size="16" /><span>桌面字幕</span>
             </button>
             <button class="menu-item" @click="cycleSleep(); moreOpen = false">
               <UiIcon name="schedule" :size="16" /><span>{{ sleepLabel }}</span>

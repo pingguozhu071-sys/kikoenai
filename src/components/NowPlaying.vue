@@ -174,7 +174,7 @@ const activeCount = computed(() => downloadState.tasks.filter((t) => t.state ===
             </div>
 
             <div class="np-subtitle-tools">
-              <span>歌词偏移</span>
+              <span>字幕偏移</span>
               <button class="np-off-btn" title="字幕提前 0.5 秒" @click="nudgeLrcOffset(-0.5)">−0.5s</button>
               <span class="np-off-val">{{ player.lrcOffset > 0 ? '+' : '' }}{{ player.lrcOffset.toFixed(1) }}s</span>
               <button class="np-off-btn" title="字幕延后 0.5 秒" @click="nudgeLrcOffset(0.5)">+0.5s</button>
@@ -182,7 +182,7 @@ const activeCount = computed(() => downloadState.tasks.filter((t) => t.state ===
             </div>
 
             <div class="np-tabs">
-              <button class="np-tab" :class="{ active: ui.nowPlayingTab === 'lyrics' }" @click="ui.nowPlayingTab = 'lyrics'">歌词</button>
+              <button class="np-tab" :class="{ active: ui.nowPlayingTab === 'lyrics' }" @click="ui.nowPlayingTab = 'lyrics'">字幕</button>
               <button class="np-tab" :class="{ active: ui.nowPlayingTab === 'queue' }" @click="ui.nowPlayingTab = 'queue'">
                 播放列表 <span class="np-tab-count">{{ player.playlist.length }}</span>
               </button>
@@ -203,7 +203,7 @@ const activeCount = computed(() => downloadState.tasks.filter((t) => t.state ===
                 </div>
               </template>
               <div v-else class="np-lrc-empty">
-                {{ player.lrcTitle ? '这份歌词没有时间轴' : '当前音轨没有歌词' }}<br />
+                {{ player.lrcTitle ? '这份字幕没有时间轴' : '当前音轨没有字幕' }}<br />
                 <span>在作品详情页可手动绑定同名 .lrc</span>
               </div>
             </div>

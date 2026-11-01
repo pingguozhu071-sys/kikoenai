@@ -357,7 +357,7 @@ onMounted(load)
 
           <div class="m3-card detail-lyrics">
             <div class="card-head">
-              <UiIcon name="lyrics" :size="18" /> 歌词
+              <UiIcon name="lyrics" :size="18" /> 字幕
               <span v-if="player.lrcTitle" class="card-sub">{{ player.lrcTitle }}</span>
             </div>
             <div ref="lrcPanel" class="lrc-panel">
