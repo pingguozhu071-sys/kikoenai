@@ -224,6 +224,7 @@ audio.addEventListener('timeupdate', () => {
     savePositionNow()
   }
   if (player.sleepAt && Date.now() >= player.sleepAt) {
+    clearSleepTimer()
     player.sleepAt = null
     audio.pause()
   }
@@ -795,17 +796,38 @@ export function resetLrcOffset() {
   notifyLyrics(true)
 }
 
+/**
+ * 睡眠定时用独立计时器兜底：只靠 timeupdate 判断的话，暂停状态下到点不会停，
+ * 再点播放才会"补执行"。
+ */
+let sleepTimer = 0
+function clearSleepTimer() {
+  if (sleepTimer) {
+    window.clearTimeout(sleepTimer)
+    sleepTimer = 0
+  }
+}
+
 export function setSleepMinutes(minutes: number) {
+  clearSleepTimer()
   player.sleepAfterTrack = false
-  player.sleepAt = Date.now() + minutes * 60 * 1000
+  const ms = Math.max(1, Math.round(minutes)) * 60 * 1000
+  player.sleepAt = Date.now() + ms
+  sleepTimer = window.setTimeout(() => {
+    sleepTimer = 0
+    player.sleepAt = null
+    if (!audio.paused) audio.pause()
+  }, ms)
 }
 
 export function sleepAfterTrack() {
+  clearSleepTimer()
   player.sleepAt = null
   player.sleepAfterTrack = true
 }
 
 export function clearSleep() {
+  clearSleepTimer()
   player.sleepAt = null
   player.sleepAfterTrack = false
 }
