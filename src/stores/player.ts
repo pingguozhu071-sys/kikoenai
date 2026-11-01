@@ -393,14 +393,20 @@ function scheduleAudioProbe() {
 function updateMediaSession() {
   const item = current()
   if (!item || !('mediaSession' in navigator)) return
+  // Media Session 只接受 http/https/data/blob；/kapi 相对地址会解析成 app:// 并报警告。
+  // 有服务器地址时补成真实 https 地址，否则干脆不带封面。
+  const apiBase = (window as unknown as { kikoeru?: { apiBase?: string } }).kikoeru?.apiBase || ''
+  const rawCover = item.coverUrl || ''
+  const artUrl = /^(https?:|data:|blob:)/i.test(rawCover)
+    ? rawCover
+    : apiBase && rawCover.startsWith('/kapi/')
+      ? apiBase + rawCover.replace(/^\/kapi/, '/api')
+      : ''
   navigator.mediaSession.metadata = new MediaMetadata({
     title: item.title,
     artist: item.workTitle,
     album: 'Kikoeru',
-    // Media Session 只接受 http/https/data/blob；app:// 会触发控制台警告，直接省略
-    artwork: /^(https?:|data:|blob:)/i.test(item.coverUrl)
-      ? [{ src: item.coverUrl, sizes: '256x256' }]
-      : [],
+    artwork: artUrl ? [{ src: artUrl, sizes: '256x256' }] : [],
   })
   navigator.mediaSession.setActionHandler('play', () => { void audio.play() })
   navigator.mediaSession.setActionHandler('pause', () => audio.pause())

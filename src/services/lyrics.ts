@@ -23,13 +23,22 @@ export function decodeText(buffer: ArrayBuffer, contentType = ''): string {
     if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(buffer)
     if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(buffer)
   }
-  // 无 BOM 的 UTF-16：ASCII 区域会有大量 0x00
+  // 无 BOM 的 UTF-16：ASCII 区域会有大量 0x00。
+  // 按零字节落在奇数位还是偶数位区分 LE / BE —— BE 用 LE 解会得到乱码，时间轴全废。
   const sample = Math.min(bytes.length, 512)
   if (sample > 32) {
     let zeros = 0
-    for (let i = 0; i < sample; i++) if (bytes[i] === 0) zeros++
+    let oddZeros = 0
+    let evenZeros = 0
+    for (let i = 0; i < sample; i++) {
+      if (bytes[i] !== 0) continue
+      zeros++
+      if (i % 2 === 0) evenZeros++
+      else oddZeros++
+    }
     if (zeros / sample > 0.3) {
-      try { return new TextDecoder('utf-16le', { fatal: true }).decode(buffer) } catch { /* 不是 UTF-16 */ }
+      const enc = evenZeros > oddZeros ? 'utf-16be' : 'utf-16le'
+      try { return new TextDecoder(enc, { fatal: true }).decode(buffer) } catch { /* 不是 UTF-16 */ }
     }
   }
 
