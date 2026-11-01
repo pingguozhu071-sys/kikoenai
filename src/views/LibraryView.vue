@@ -33,6 +33,9 @@ const TABS: { key: TabKey; label: string }[] = [
 
 const tab = ref<TabKey>('playlist')
 const works = ref<Work[]>([])
+/** 旧客户端的“收藏”实际记在 listening 进度里；这里作为历史收藏一起展示 */
+const legacy = ref<Work[]>([])
+const legacyTotal = ref(0)
 const loading = ref(false)
 const error = ref('')
 const total = ref(0)
@@ -60,12 +63,34 @@ async function loadPlaylist() {
   }
   works.value = all
   total.value = all.length
+
+  // 旧客户端把“收藏”记成了 listening 进度：只读取展示，不往服务器写
+  const favIds = new Set(all.map((w) => w.id))
+  const olds: Work[] = []
+  const seen = new Set<number>()
+  let lp = 1
+  for (;;) {
+    const res = await getReview('listening', lp, 'id', 'desc', 60)
+    const list = res.works ?? []
+    for (const w of list) {
+      if (favIds.has(w.id) || seen.has(w.id)) continue
+      seen.add(w.id)
+      olds.push(w)
+    }
+    const totalCount = res.pagination?.totalCount ?? 0
+    if (!list.length || lp * 60 >= totalCount || lp > 10) break
+    lp++
+  }
+  legacy.value = olds
+  legacyTotal.value = olds.length
 }
 
 async function loadReview(filter: string) {
   const res = await getReview(filter || null, 1, 'id', 'desc', 60)
   works.value = res.works ?? []
   total.value = res.pagination?.totalCount ?? works.value.length
+  legacy.value = []
+  legacyTotal.value = 0
 }
 
 async function load() {
@@ -149,7 +174,7 @@ const heading = computed(() => {
           <button class="filled-btn" @click="load">重试</button>
         </div>
 
-        <div v-else-if="!works.length" class="empty-state">
+        <div v-else-if="!works.length && !legacy.length" class="empty-state">
           <UiIcon name="favorite" :size="38" />
           <div>{{ tab === 'playlist' ? '收藏夹还是空的' : '这个分类下还没有作品' }}</div>
           <button class="chip" @click="router.push('/')">去逛逛</button>
@@ -158,6 +183,15 @@ const heading = computed(() => {
         <div v-else class="works-grid">
           <WorkCard v-for="w in works" :key="w.id" :work="w" />
         </div>
+
+        <template v-if="tab === 'playlist' && legacy.length">
+          <div class="lib-legacy-title">
+            历史收藏 · {{ legacyTotal }} 部<span>（旧客户端记在「在听」，这里只做展示）</span>
+          </div>
+          <div class="works-grid">
+            <WorkCard v-for="w in legacy" :key="'old-' + w.id" :work="w" />
+          </div>
+        </template>
       </template>
     </div>
   </div>
