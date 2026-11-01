@@ -6,7 +6,7 @@
 import { computed, onMounted, ref } from 'vue'
 import UiIcon from '../components/UiIcon.vue'
 import WorkCard from '../components/WorkCard.vue'
-import { createPlaylist, deletePlaylist, getPlaylistMetadata, getPlaylists } from '../api/client'
+import { createPlaylist, deletePlaylist, getPlaylistWorks, getPlaylists } from '../api/client'
 import type { PlaylistMeta, Work } from '../api/types'
 import { useSession } from '../stores/session'
 import { toast } from '../stores/toast'
@@ -29,7 +29,8 @@ async function load() {
   if (!isLoggedIn.value) return
   loading.value = true
   try {
-    lists.value = await getPlaylists()
+    // __SYS_PLAYLIST_MARKED / _LIKED 是服务端自建的收藏夹，不能当普通列表展示或删除
+    lists.value = (await getPlaylists()).filter((p) => !String(p.name || '').startsWith('__SYS'))
   } catch (e) {
     toast(`加载播放列表失败：${e instanceof Error ? e.message : String(e)}`, 'error')
   } finally {
@@ -42,8 +43,17 @@ async function open(list: PlaylistMeta) {
   works.value = []
   worksLoading.value = true
   try {
-    const meta = await getPlaylistMetadata(list.id)
-    works.value = meta.works ?? []
+    // 元数据接口只给数量，作品要单独分页取
+    const all: Work[] = []
+    let page = 1
+    for (;;) {
+      const res = await getPlaylistWorks(list.id, page, 60)
+      all.push(...(res.works ?? []))
+      const total = res.pagination?.totalCount ?? all.length
+      if (!res.works?.length || all.length >= total || page > 50) break
+      page++
+    }
+    works.value = all
   } catch (e) {
     toast(`读取列表失败：${e instanceof Error ? e.message : String(e)}`, 'error')
   } finally {
@@ -73,6 +83,7 @@ async function create() {
 }
 
 async function remove(list: PlaylistMeta) {
+  if (String(list.name || '').startsWith('__SYS')) return
   const label = list.name || String(list.id)
   if (!window.confirm(`删除播放列表「${label}」？只会删列表，不会删作品本身。`)) return
   try {
