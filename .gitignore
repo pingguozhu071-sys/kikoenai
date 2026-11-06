@@ -34,3 +34,6 @@ desktop.ini
 
 # SMTC 宿主编译产物
 smc/build/
+
+# 编译中间产物
+*.obj
