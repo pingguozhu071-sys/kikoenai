@@ -1,8 +1,12 @@
 /**
  * 收藏夹 —— 服务端的默认 mark playlist。
  *
- * 播放条那颗心必须和「收藏夹」页面是同一份数据：站点上收藏就是往这个列表加作品，
- * 而 review.progress='marked' 是另一套「想听」标记，且在播放时会被自动改成 listening。
+ * 设计要点（整改后）：
+ *  - 只有一个状态机：idle / loading / ready / error；加载失败绝不标记为 ready，
+ *    否则一次网络抖动会让后续所有收藏操作永久报“没有默认收藏夹”。
+ *  - 同一作品的写操作串行化，连点不会打两次请求。
+ *  - 写入采用乐观更新，失败回滚到操作前的集合。
+ *  - `rev` 是给界面的版本号：任何增删/加载完成都会自增，依赖它的 computed 会重算。
  */
 import { reactive } from 'vue'
 import {
@@ -10,26 +14,38 @@ import {
 } from '../api/client'
 import { useSession } from './session'
 
+export type FavoriteStatus = 'idle' | 'loading' | 'ready' | 'error'
+
 export const favorites = reactive({
-  ready: false,
+  status: 'idle' as FavoriteStatus,
+  error: '',
   playlistId: null as number | string | null,
   ids: new Set<number>(),
   /** 每次变更自增，供界面依赖（Set 的增删不一定触发深度监听） */
   rev: 0,
+  /** 只统计“用户真正增删成功”的次数：页面据此重新拉列表，避免加载本身触发刷新 */
+  mutations: 0,
 })
 
-let loading: Promise<void> | null = null
+let loading: Promise<boolean> | null = null
 let ownerName: string | null = null
+const pending = new Map<number, Promise<boolean>>()
+
+function resetState() {
+  favorites.status = 'idle'
+  favorites.error = ''
+  favorites.mutations = 0
+  favorites.playlistId = null
+  favorites.ids = new Set<number>()
+  favorites.rev++
+}
 
 /** 账号变了就作废缓存（切号后不能拿上一个人的收藏夹判断） */
 export function syncFavoriteOwner() {
   const name = useSession.currentName
   if (name === ownerName) return
   ownerName = name
-  favorites.ready = false
-  favorites.playlistId = null
-  favorites.ids = new Set<number>()
-  favorites.rev++
+  resetState()
 }
 
 export function isFavorite(workId: number | undefined | null): boolean {
@@ -39,58 +55,131 @@ export function isFavorite(workId: number | undefined | null): boolean {
   return favorites.ids.has(workId)
 }
 
-/** 拉取一次默认收藏夹里的作品 id 集合 */
-export async function ensureFavorites(force = false): Promise<void> {
+export function isFavoriteBusy(workId: number | undefined | null): boolean {
+  return !!workId && pending.has(workId)
+}
+
+export function favoriteCount(): number {
+  void favorites.rev
+  return favorites.ids.size
+}
+
+/**
+ * 拉取默认收藏夹的作品 id 集合。
+ * 返回是否成功；失败时 status='error'，调用方可提示重试。
+ */
+export async function loadFavorites(force = false): Promise<boolean> {
   syncFavoriteOwner()
   if (!useSession.loggedIn) {
-    favorites.ready = true
-    return
+    favorites.status = 'idle'
+    favorites.error = ''
+    return false
   }
-  if (!force && favorites.ready) return
-  if (!force && loading) return loading
+  if (!force && favorites.status === 'ready' && favorites.playlistId != null) return true
+  if (loading) return loading
+
+  favorites.status = 'loading'
+  favorites.error = ''
 
   loading = (async () => {
     try {
       const meta = await getDefaultMarkPlaylist()
+      if (meta?.id === undefined || meta?.id === null) throw new Error('服务端没有返回默认收藏夹')
       favorites.playlistId = meta.id
-      // 元数据只给 works_count；作品列表要按页取
+
       const ids = new Set<number>()
       let page = 1
       for (;;) {
-        const full = await getPlaylistWorks(meta.id, page, 60)
-        for (const w of full.works || []) ids.add(w.id)
-        const total = full.pagination?.totalCount ?? 0
-        if (page * 60 >= total || !full.works?.length) break
+        const res = await getPlaylistWorks(meta.id, page, 60)
+        for (const w of res.works || []) ids.add(w.id)
+        const total = res.pagination?.totalCount ?? 0
+        if (!res.works?.length || allFetched(page, ids.size, total) || page > 50) break
         page++
-        if (page > 50) break
       }
+
       favorites.ids = ids
-    } catch {
-      // 拿不到就维持"未知"，不打断播放；下次切歌/登录再试
-      favorites.ready = false
-    } finally {
-      favorites.ready = true
-      loading = null
+      favorites.status = 'ready'
       favorites.rev++
+      return true
+    } catch (e) {
+      // 关键：这里不能把 ready 置为 true，否则后续操作会以为缓存有效
+      favorites.status = 'error'
+      favorites.error = e instanceof Error ? e.message : '收藏夹加载失败'
+      // 落日志：出问题时能从 userData/logs 里看到原因，而不是只有一句 toast
+      console.warn('[favorites] load failed:', favorites.error)
+      favorites.rev++
+      return false
+    } finally {
+      loading = null
     }
   })()
+
   return loading
 }
 
-/** 加入 / 移出默认收藏夹，返回操作后的状态 */
+function allFetched(page: number, got: number, total: number): boolean {
+  if (total <= 0) return true
+  return got >= total || page * 60 >= total
+}
+
+/** 兼容旧调用名 */
+export const ensureFavorites = loadFavorites
+
+/** 强制重新拉取（设置页/错误提示上的“重试”用） */
+export function refreshFavorites(): Promise<boolean> {
+  return loadFavorites(true)
+}
+
+/**
+ * 加入 / 移出默认收藏夹，返回操作后的状态（true=已收藏）。
+ * 同一作品并发调用会复用同一个 Promise。
+ */
 export async function toggleFavorite(workId: number): Promise<boolean> {
-  await ensureFavorites()
-  const listId = favorites.playlistId
-  if (listId == null) throw new Error('没有找到默认收藏夹')
+  if (!useSession.loggedIn) throw new Error('收藏需要登录')
 
-  const had = favorites.ids.has(workId)
-  if (had) await removeWorksFromPlaylist(listId, [workId])
-  else await addWorksToPlaylist(listId, [workId])
+  const existing = pending.get(workId)
+  if (existing) return existing
 
-  const next = new Set(favorites.ids)
-  if (had) next.delete(workId)
-  else next.add(workId)
-  favorites.ids = next
-  favorites.rev++
-  return !had
+  const run = (async () => {
+    let ok = await loadFavorites()
+    if (!ok || favorites.playlistId == null) {
+      // 首次失败（网络抖动/登录刚恢复）时强制重试一次，而不是直接判死
+      ok = await loadFavorites(true)
+      if (!ok || favorites.playlistId == null) {
+        throw new Error(favorites.error || '收藏夹暂时不可用，请稍后重试')
+      }
+    }
+
+    const listId = favorites.playlistId
+    const before = new Set(favorites.ids)
+    const had = before.has(workId)
+
+    // 乐观更新
+    const optimistic = new Set(before)
+    if (had) optimistic.delete(workId)
+    else optimistic.add(workId)
+    favorites.ids = optimistic
+    favorites.rev++
+
+    try {
+      if (had) await removeWorksFromPlaylist(listId, [workId])
+      else await addWorksToPlaylist(listId, [workId])
+      favorites.status = 'ready'
+      favorites.error = ''
+      favorites.mutations++
+      return !had
+    } catch (e) {
+      // 回滚到操作前
+      favorites.ids = before
+      favorites.rev++
+      throw e
+    }
+  })()
+
+  pending.set(workId, run)
+  try {
+    return await run
+  } finally {
+    pending.delete(workId)
+  }
 }

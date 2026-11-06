@@ -17,7 +17,7 @@ import { useSession } from '../stores/session'
 import { ui } from '../stores/ui'
 import { toast } from '../stores/toast'
 import { downloadWork, downloadTrack } from '../stores/downloads'
-import { ensureFavorites, isFavorite, toggleFavorite } from '../stores/favorites'
+import { ensureFavorites, isFavorite, isFavoriteBusy, toggleFavorite } from '../stores/favorites'
 import { fmtBytes, fmtCount, fmtDuration } from '../utils/format'
 import { decodeText } from '../services/lyrics'
 
@@ -378,10 +378,12 @@ onMounted(load)
                 <UiIcon name="download" :size="15" /> 下载全部
               </button>
               <button
-                class="chip" :class="{ plain: !favorite }" :disabled="favoriteBusy"
+                class="chip" :class="{ plain: !favorite }"
+                :disabled="favoriteBusy || isFavoriteBusy(workId)"
+                :title="favorite ? '再点一次取消收藏' : '加入收藏夹'"
                 @click="toggleFav"
               >
-                {{ favorite ? '已收藏 · 点此取消' : '收藏' }}
+                {{ favorite ? '已收藏' : '收藏' }}
               </button>
               <button class="chip" @click="playlistOpen = true">加入播放列表</button>
               <button class="chip" @click="voteOpen = true">标签纠错</button>

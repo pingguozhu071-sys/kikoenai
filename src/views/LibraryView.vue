@@ -11,10 +11,11 @@ import UiIcon from '../components/UiIcon.vue'
 import WorkCard from '../components/WorkCard.vue'
 import SkeletonGrid from '../components/SkeletonGrid.vue'
 import {
-  getDefaultMarkPlaylist, getPlaylistWorks, getReview,
+  getPlaylistWorks, getReview,
 } from '../api/client'
 import type { Work } from '../api/types'
 import { useSession } from '../stores/session'
+import { favorites, loadFavorites } from '../stores/favorites'
 import { ui } from '../stores/ui'
 
 const router = useRouter()
@@ -44,13 +45,13 @@ const playlistName = ref('')
 const needLogin = computed(() => !session.loggedIn)
 
 async function loadPlaylist() {
-  // 元数据接口只返回 works_count，作品要单独取（分页拉全量）
-  const meta = await getDefaultMarkPlaylist()
-  const rawName = (meta?.name as string) || ''
-  // 服务端默认夹叫 __SYS_PLAYLIST_MARKED，界面上不该露出来
-  playlistName.value = !rawName || rawName.startsWith('__SYS') ? '收藏夹' : rawName
-  const id = meta?.id
-  if (id === undefined || id === null) throw new Error('没有默认收藏夹')
+  // 统一走收藏 store：失败可重试，不会因为一次网络抖动把后续操作判死
+  const ok = await loadFavorites()
+  if (!ok || favorites.playlistId == null) {
+    throw new Error(favorites.error || '收藏夹加载失败')
+  }
+  playlistName.value = '收藏夹'
+  const id = favorites.playlistId
 
   const all: Work[] = []
   let page = 1
@@ -99,13 +100,8 @@ async function load() {
   error.value = ''
   try {
     if (tab.value === 'playlist') {
-      try {
-        await loadPlaylist()
-      } catch {
-        // 服务端没有收藏夹接口 / 未创建默认夹 → 回落到「想听」
-        tab.value = 'marked'
-        return
-      }
+      // 失败不再偷偷跳到「想听」：明确报错，让用户看到原因并重试
+      await loadPlaylist()
     } else {
       await loadReview(tab.value)
     }
@@ -118,6 +114,10 @@ async function load() {
 
 watch(tab, load)
 watch(() => session.currentName, load)
+// 详情页/播放条收藏成功后，收藏夹页立刻刷新（mutations 只在真正写成功后自增）
+watch(() => favorites.mutations, () => {
+  if (tab.value === 'playlist' && !loading.value) void load()
+})
 onMounted(load)
 
 const heading = computed(() => {
