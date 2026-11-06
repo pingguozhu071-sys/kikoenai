@@ -1,17 +1,18 @@
 /**
- * 收藏夹 —— 服务端的默认 mark playlist。
+ * 收藏夹 —— 服务端默认 mark playlist 的唯一数据源。
  *
- * 设计要点（整改后）：
- *  - 只有一个状态机：idle / loading / ready / error；加载失败绝不标记为 ready，
- *    否则一次网络抖动会让后续所有收藏操作永久报“没有默认收藏夹”。
- *  - 同一作品的写操作串行化，连点不会打两次请求。
- *  - 写入采用乐观更新，失败回滚到操作前的集合。
- *  - `rev` 是给界面的版本号：任何增删/加载完成都会自增，依赖它的 computed 会重算。
+ * 约束（一次网络抖动不能让功能永久失效）：
+ *  - 状态机 idle/loading/ready/error，失败绝不标记 ready；
+ *  - 加载失败带可读原因，界面可重试；
+ *  - 同一作品写入串行，连点只发一次；
+ *  - 乐观更新，失败回滚；
+ *  - works + ids 一起缓存，收藏页不再单独重复拉一遍。
  */
 import { reactive } from 'vue'
 import {
   addWorksToPlaylist, getDefaultMarkPlaylist, getPlaylistWorks, removeWorksFromPlaylist,
 } from '../api/client'
+import type { Work } from '../api/types'
 import { useSession } from './session'
 
 export type FavoriteStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -21,9 +22,11 @@ export const favorites = reactive({
   error: '',
   playlistId: null as number | string | null,
   ids: new Set<number>(),
-  /** 每次变更自增，供界面依赖（Set 的增删不一定触发深度监听） */
+  /** 与 ids 同一次加载拿到的作品对象，收藏页直接复用 */
+  works: [] as Work[],
+  /** 增删/加载完成都自增，供 computed 依赖 */
   rev: 0,
-  /** 只统计“用户真正增删成功”的次数：页面据此重新拉列表，避免加载本身触发刷新 */
+  /** 只统计用户真正增删成功的次数（页面据此刷新，避免加载自触发） */
   mutations: 0,
 })
 
@@ -34,13 +37,13 @@ const pending = new Map<number, Promise<boolean>>()
 function resetState() {
   favorites.status = 'idle'
   favorites.error = ''
-  favorites.mutations = 0
   favorites.playlistId = null
   favorites.ids = new Set<number>()
+  favorites.works = []
+  favorites.mutations = 0
   favorites.rev++
 }
 
-/** 账号变了就作废缓存（切号后不能拿上一个人的收藏夹判断） */
 export function syncFavoriteOwner() {
   const name = useSession.currentName
   if (name === ownerName) return
@@ -50,7 +53,6 @@ export function syncFavoriteOwner() {
 
 export function isFavorite(workId: number | undefined | null): boolean {
   if (!workId) return false
-  // 读 rev 是为了让依赖方在增删后重新求值
   void favorites.rev
   return favorites.ids.has(workId)
 }
@@ -64,9 +66,19 @@ export function favoriteCount(): number {
   return favorites.ids.size
 }
 
+/** 把底层错误转成人话（HTTP 码对用户没意义） */
+function friendlyError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (/HTTP 401/.test(msg)) return '登录已过期，请重新登录'
+  if (/HTTP 403/.test(msg)) return '没有权限访问收藏夹'
+  if (/HTTP 5\d\d/.test(msg)) return '服务器暂时不可用，请稍后重试'
+  if (/Failed to fetch|NetworkError|ECONN/i.test(msg)) return '网络连接失败，请检查网络或代理'
+  return msg || '收藏夹加载失败'
+}
+
 /**
- * 拉取默认收藏夹的作品 id 集合。
- * 返回是否成功；失败时 status='error'，调用方可提示重试。
+ * 拉取默认收藏夹（ids 与作品列表一起）。
+ * @returns 是否成功
  */
 export async function loadFavorites(force = false): Promise<boolean> {
   syncFavoriteOwner()
@@ -88,24 +100,28 @@ export async function loadFavorites(force = false): Promise<boolean> {
       favorites.playlistId = meta.id
 
       const ids = new Set<number>()
+      const works: Work[] = []
       let page = 1
       for (;;) {
         const res = await getPlaylistWorks(meta.id, page, 60)
-        for (const w of res.works || []) ids.add(w.id)
+        for (const w of res.works || []) {
+          if (ids.has(w.id)) continue
+          ids.add(w.id)
+          works.push(w)
+        }
         const total = res.pagination?.totalCount ?? 0
-        if (!res.works?.length || allFetched(page, ids.size, total) || page > 50) break
+        if (!res.works?.length || gotAll(page, ids.size, total) || page > 50) break
         page++
       }
 
       favorites.ids = ids
+      favorites.works = works
       favorites.status = 'ready'
       favorites.rev++
       return true
     } catch (e) {
-      // 关键：这里不能把 ready 置为 true，否则后续操作会以为缓存有效
       favorites.status = 'error'
-      favorites.error = e instanceof Error ? e.message : '收藏夹加载失败'
-      // 落日志：出问题时能从 userData/logs 里看到原因，而不是只有一句 toast
+      favorites.error = friendlyError(e)
       console.warn('[favorites] load failed:', favorites.error)
       favorites.rev++
       return false
@@ -117,7 +133,7 @@ export async function loadFavorites(force = false): Promise<boolean> {
   return loading
 }
 
-function allFetched(page: number, got: number, total: number): boolean {
+function gotAll(page: number, got: number, total: number): boolean {
   if (total <= 0) return true
   return got >= total || page * 60 >= total
 }
@@ -125,14 +141,13 @@ function allFetched(page: number, got: number, total: number): boolean {
 /** 兼容旧调用名 */
 export const ensureFavorites = loadFavorites
 
-/** 强制重新拉取（设置页/错误提示上的“重试”用） */
 export function refreshFavorites(): Promise<boolean> {
   return loadFavorites(true)
 }
 
 /**
  * 加入 / 移出默认收藏夹，返回操作后的状态（true=已收藏）。
- * 同一作品并发调用会复用同一个 Promise。
+ * 同一作品并发调用复用同一个 Promise。
  */
 export async function toggleFavorite(workId: number): Promise<boolean> {
   if (!useSession.loggedIn) throw new Error('收藏需要登录')
@@ -143,7 +158,7 @@ export async function toggleFavorite(workId: number): Promise<boolean> {
   const run = (async () => {
     let ok = await loadFavorites()
     if (!ok || favorites.playlistId == null) {
-      // 首次失败（网络抖动/登录刚恢复）时强制重试一次，而不是直接判死
+      // 首次失败（网络抖动/登录刚恢复）强制重试一次
       ok = await loadFavorites(true)
       if (!ok || favorites.playlistId == null) {
         throw new Error(favorites.error || '收藏夹暂时不可用，请稍后重试')
@@ -154,7 +169,6 @@ export async function toggleFavorite(workId: number): Promise<boolean> {
     const before = new Set(favorites.ids)
     const had = before.has(workId)
 
-    // 乐观更新
     const optimistic = new Set(before)
     if (had) optimistic.delete(workId)
     else optimistic.add(workId)
@@ -167,12 +181,14 @@ export async function toggleFavorite(workId: number): Promise<boolean> {
       favorites.status = 'ready'
       favorites.error = ''
       favorites.mutations++
+      // 作品对象列表失效：收藏页据 mutations 重新拉一次
+      favorites.works = []
+      favorites.rev++
       return !had
     } catch (e) {
-      // 回滚到操作前
       favorites.ids = before
       favorites.rev++
-      throw e
+      throw new Error(friendlyError(e))
     }
   })()
 

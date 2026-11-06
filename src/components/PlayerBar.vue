@@ -11,7 +11,8 @@ import {
   cycleRepeat, toggleShuffle, seekBy, retryCurrent,
 } from '../stores/player'
 import { downloadState, downloadSingleItem, isDesktop as downloadsAvailable } from '../stores/downloads'
-import { ensureFavorites, isFavorite, toggleFavorite } from '../stores/favorites'
+import { ensureFavorites } from '../stores/favorites'
+import { useFavorite } from '../composables/useFavorite'
 import { useSession } from '../stores/session'
 import { ui } from '../stores/ui'
 import { toast } from '../stores/toast'
@@ -21,29 +22,18 @@ const router = useRouter()
 const item = computed(() => current())
 const isVideo = computed(() => !!item.value?.isVideo)
 
-const liked = computed(() => isFavorite(item.value?.workId))
-const likeBusy = ref(false)
+const { favorite: liked, busy: likeBusy, toggle: likeCurrent } = useFavorite(() => item.value?.workId)
 
-/** 切歌 / 登录状态变化时刷新收藏夹缓存 */
+/** 切歌 / 登录状态变化时刷新收藏夹缓存（登录恢复时强制刷新一次） */
 watch(
   [() => item.value?.workId, () => session.loggedIn],
-  () => { if (session.loggedIn) void ensureFavorites() },
+  ([, loggedIn], prev) => {
+    if (!loggedIn) return
+    const justLoggedIn = prev && !prev[1] && loggedIn
+    void ensureFavorites(justLoggedIn)
+  },
   { immediate: true },
 )
-
-async function likeCurrent() {
-  const it = item.value
-  if (!it) return
-  if (!session.loggedIn) { ui.openLogin('收藏需要登录'); return }
-  if (likeBusy.value) return
-  likeBusy.value = true
-  try {
-    const now = await toggleFavorite(it.workId)
-    toast(now ? '已加入收藏夹' : '已移出收藏夹', 'success')
-  } catch (e) {
-    toast(`收藏失败：${e instanceof Error ? e.message : String(e)}`, 'error')
-  } finally { likeBusy.value = false }
-}
 
 const modeIcon = computed(() => {
   if (player.shuffle) return 'shuffle'

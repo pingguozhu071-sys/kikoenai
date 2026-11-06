@@ -17,7 +17,8 @@ import { useSession } from '../stores/session'
 import { ui } from '../stores/ui'
 import { toast } from '../stores/toast'
 import { downloadWork, downloadTrack } from '../stores/downloads'
-import { ensureFavorites, isFavorite, isFavoriteBusy, toggleFavorite } from '../stores/favorites'
+import { ensureFavorites } from '../stores/favorites'
+import { useFavorite } from '../composables/useFavorite'
 import { fmtBytes, fmtCount, fmtDuration } from '../utils/format'
 import { decodeText } from '../services/lyrics'
 
@@ -35,8 +36,7 @@ const similarSub = ref('听过这部的人也听了')
 const loading = ref(true)
 const error = ref('')
 const marked = ref<ProgressValue | null>(null)
-const favorite = computed(() => isFavorite(workId.value))
-const favoriteBusy = ref(false)
+const { favorite, busy: favoriteBusy, toggle: toggleFav } = useFavorite(() => workId.value)
 const playlistOpen = ref(false)
 const voteOpen = ref(false)
 const markBusy = ref(false)
@@ -270,21 +270,6 @@ async function mark(p: ProgressValue) {
   }
 }
 
-/** 收藏 = 默认收藏夹（站点上的「收藏」就是这个），可以再加一次取消 */
-async function toggleFav() {
-  if (!session.loggedIn) { ui.openLogin('收藏需要登录'); return }
-  if (favoriteBusy.value) return
-  favoriteBusy.value = true
-  try {
-    const now = await toggleFavorite(workId.value)
-    toast(now ? '已加入收藏夹' : '已移出收藏夹', 'success')
-  } catch (e) {
-    toast(`收藏失败：${e instanceof Error ? e.message : String(e)}`, 'error')
-  } finally {
-    favoriteBusy.value = false
-  }
-}
-
 // 歌词自动滚动
 const lrcPanel = ref<HTMLElement | null>(null)
 const activeIdx = computed(() => activeLrcIndex())
@@ -379,7 +364,7 @@ onMounted(load)
               </button>
               <button
                 class="chip" :class="{ plain: !favorite }"
-                :disabled="favoriteBusy || isFavoriteBusy(workId)"
+                :disabled="favoriteBusy"
                 :title="favorite ? '再点一次取消收藏' : '加入收藏夹'"
                 @click="toggleFav"
               >

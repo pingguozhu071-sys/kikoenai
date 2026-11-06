@@ -10,12 +10,10 @@ import { useRouter } from 'vue-router'
 import UiIcon from '../components/UiIcon.vue'
 import WorkCard from '../components/WorkCard.vue'
 import SkeletonGrid from '../components/SkeletonGrid.vue'
-import {
-  getPlaylistWorks, getReview,
-} from '../api/client'
+import { getReview } from '../api/client'
 import type { Work } from '../api/types'
 import { useSession } from '../stores/session'
-import { favorites, loadFavorites } from '../stores/favorites'
+import { favorites, loadFavorites, refreshFavorites } from '../stores/favorites'
 import { ui } from '../stores/ui'
 
 const router = useRouter()
@@ -45,23 +43,13 @@ const playlistName = ref('')
 const needLogin = computed(() => !session.loggedIn)
 
 async function loadPlaylist() {
-  // 统一走收藏 store：失败可重试，不会因为一次网络抖动把后续操作判死
-  const ok = await loadFavorites()
+  // 统一走收藏 store：ids 与作品列表一次取回；增删后 works 被清空，这里强制重拉
+  const ok = await loadFavorites(favorites.works.length === 0)
   if (!ok || favorites.playlistId == null) {
     throw new Error(favorites.error || '收藏夹加载失败')
   }
   playlistName.value = '收藏夹'
-  const id = favorites.playlistId
-
-  const all: Work[] = []
-  let page = 1
-  for (;;) {
-    const res = await getPlaylistWorks(id, page, 60)
-    all.push(...(res.works ?? []))
-    const totalCount = res.pagination?.totalCount ?? all.length
-    if (!res.works?.length || all.length >= totalCount || page > 50) break
-    page++
-  }
+  const all = favorites.works
   works.value = all
   total.value = all.length
 
@@ -92,6 +80,13 @@ async function loadReview(filter: string) {
   total.value = res.pagination?.totalCount ?? works.value.length
   legacy.value = []
   legacyTotal.value = 0
+}
+
+/** 手动刷新：绕过缓存重新拉收藏夹（别处改动/多端同步后使用） */
+async function refresh() {
+  if (loading.value) return
+  await refreshFavorites()
+  await load()
 }
 
 async function load() {
@@ -136,6 +131,13 @@ const heading = computed(() => {
         <span v-if="session.loggedIn && total" class="count">{{ total }}</span>
       </div>
       <div class="header-right">
+        <button
+          v-if="session.loggedIn && tab === 'playlist'"
+          class="icon-btn" title="刷新收藏夹" :disabled="loading"
+          @click="refresh"
+        >
+          <UiIcon name="refresh" :size="17" />
+        </button>
         <span v-if="session.loggedIn" class="user-chip" style="cursor: default">
           <span class="avatar">{{ session.userName.slice(0, 1).toUpperCase() }}</span>
           <span class="uname">{{ session.userName }}</span>
